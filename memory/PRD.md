@@ -7,56 +7,60 @@ Mobile app for Aruvi Housing Solutions to track finances, inventory, and project
 - **Frontend:** Expo (React Native) with Expo Router, bottom tab navigation
 - **Backend:** FastAPI (Python) with Motor (MongoDB async driver)
 - **Database:** MongoDB
+- **Auth:** JWT Bearer token (single company login)
+- **Backup:** Google Drive API with OAuth2
+
+## Authentication
+- Single company login: `aruvihousingsolutions@gmail.com`
+- JWT token stored in AsyncStorage, sent as Bearer header
+- 30-day token expiry
+- All API routes protected
 
 ## Core Modules
 
 ### 1. Dashboard
-- Total balance (Bank + Petty Cash)
-- Receivables, Expenses, Profit/Loss metrics
+- Total balance (Bank + Petty Cash), Receivables, Expenses, Profit/Loss
 - Stock breakdown by bag type (Naturoplast & Iraniya)
 - Expandable Balance Sheet (Assets vs Liabilities)
 - Expandable Bank Account section with transaction list
 - Monthly income/expense breakdown
+- Google Drive backup controls (Connect/Backup Now/Disconnect)
+- Sign Out button
 
 ### 2. Projects
-- CRUD operations for projects
-- Fields: name, plaster area (initial/final), invoiced amount, received amount, auto-calculated pending
-- **Bag Usage Tracking**: Add bag usage entries with date, bag type (Naturoplast/Iraniya), quantity
-- **Linked Transactions**: View all income/expense transactions linked to a project
+- CRUD operations with bag usage tracking (date, type, quantity)
+- Linked transactions view in project detail
 - Status: Pending / Completed
 
 ### 3. Transactions
-- Unified income/expense transaction system
-- **Project Linking**: Dropdown to tag transactions to projects
+- Unified income/expense with project linking dropdown
 - Mode: Bank / Petty Cash / Partner
-- Categories (expenses): Bags, Labor, Transport, Materials, Rent, Electricity, Food, Misc
-- Auto-updates bank/petty cash balances
-- CSV export functionality
+- Categories for expenses, CSV export
 
 ### 4. Inventory (Bags)
-- Two bag types: **Naturoplast** and **Iraniya** (tracked separately)
-- Per-type stock count, purchased, and used metrics
-- Purchase history with bag type and payment mode
-- Bags deducted automatically from project usage
+- Two bag types: Naturoplast and Iraniya (tracked separately)
+- Purchase history with payment mode
+- Auto-deduction from project usage
 
 ### 5. Partners
-- Partner CRUD with investment/withdrawal tracking
-- **Date field** on all partner transactions
-- **Bank impact**: Investments ADD to bank, Withdrawals DEDUCT from bank
-- Creates corresponding bank transaction entries
-- Expandable transaction history per partner
+- Investment/withdrawal tracking with date
+- Bank balance impact (investments ADD, withdrawals DEDUCT)
+- Transaction history per partner
 
-## Currency
-All amounts in ₹ (INR)
+## Google Drive Backup
+- OAuth2 flow to connect company Google Drive
+- Creates `Aruvi Housing Solutions - Backup` folder
+- Exports all collections as JSON files in dated subfolders
+- Manual backup via dashboard button
+- Auto-backup every 24 hours when connected
 
 ## API Endpoints
-- `GET /api/dashboard` - All metrics including balance sheet data
-- `GET/POST /api/projects` - Project CRUD
-- `GET /api/projects/{id}` - Project detail with linked transactions
-- `POST /api/projects/{id}/bag-usage` - Add bag usage
-- `GET/POST /api/transactions` - Transaction CRUD with filtering
-- `GET /api/inventory` - Inventory with per-type breakdown
-- `POST /api/inventory/purchase` - Add bag purchase
-- `GET/POST /api/partners` - Partner CRUD
-- `POST /api/partners/transaction` - Partner investment/withdrawal
+- `POST /api/auth/login` - Login
+- `GET /api/auth/me` - Current user
+- `GET /api/dashboard` - All metrics
+- CRUD: `/api/projects`, `/api/transactions`, `/api/partners`, `/api/inventory`
+- `GET /api/drive/connect` - Initiate Google Drive OAuth
+- `GET /api/oauth/drive/callback` - OAuth callback
+- `POST /api/drive/backup` - Manual backup
+- `GET /api/drive/status` - Drive connection status
 - `GET /api/export/transactions` - CSV export
