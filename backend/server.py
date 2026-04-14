@@ -8,7 +8,7 @@ import logging
 from pathlib import Path
 from pydantic import BaseModel, Field
 from typing import List, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 from bson import ObjectId
 import io
 import csv
@@ -17,77 +17,45 @@ import csv
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
-# MongoDB connection
 mongo_url = os.environ['MONGO_URL']
 client = AsyncIOMotorClient(mongo_url)
 db = client[os.environ['DB_NAME']]
 
-# Create the main app without a prefix
 app = FastAPI()
-
-# Create a router with the /api prefix
 api_router = APIRouter(prefix="/api")
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 
 # ========== MODELS ==========
 
-class Project(BaseModel):
-    id: Optional[str] = None
-    name: str
-    initial_plaster_area: float
-    final_plastered_area: float
-    bags_used: int
-    invoiced_amount: float
-    amount_received: float
-    pending_amount: float = 0
-    status: str = "Pending"  # Pending or Completed
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+BAG_TYPES = ["Naturoplast", "Iraniya"]
 
 class ProjectCreate(BaseModel):
     name: str
     initial_plaster_area: float
     final_plastered_area: float
-    bags_used: int
+    bag_usage_history: List[dict] = []
     invoiced_amount: float
     amount_received: float
     status: str = "Pending"
 
-class Transaction(BaseModel):
-    id: Optional[str] = None
-    date: datetime
-    amount: float
-    type: str  # Income or Expense
-    mode: str  # Bank, Petty Cash, Partner
-    linked_project_id: Optional[str] = None
-    category: Optional[str] = None  # For expenses only
-    description: str = ""
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+class BagUsageEntry(BaseModel):
+    project_id: str
+    date: str
+    bag_type: str
+    quantity: int
 
 class TransactionCreate(BaseModel):
-    date: datetime
+    date: str
     amount: float
     type: str
     mode: str
     linked_project_id: Optional[str] = None
+    linked_project_name: Optional[str] = None
     category: Optional[str] = None
     description: str = ""
-
-class Partner(BaseModel):
-    id: Optional[str] = None
-    name: str
-    total_investment: float = 0
-    total_withdrawals: float = 0
-    current_balance: float = 0
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
 
 class PartnerCreate(BaseModel):
     name: str
@@ -96,90 +64,115 @@ class PartnerCreate(BaseModel):
 class PartnerTransaction(BaseModel):
     partner_id: str
     amount: float
-    type: str  # Investment or Withdrawal
+    type: str
+    date: str
 
 class InventoryPurchase(BaseModel):
     bags: int
+    bag_type: str
     amount: float
-    date: datetime
-
-class Settings(BaseModel):
-    bank_balance: float = 0
-    petty_cash_balance: float = 0
+    date: str
+    mode: str = "Bank"
 
 
-# ========== HELPER FUNCTIONS ==========
+# ========== HELPERS ==========
 
 def serialize_doc(doc):
-    """Convert MongoDB document to dict with string ID"""
     if doc and "_id" in doc:
         doc["id"] = str(doc["_id"])
         del doc["_id"]
     return doc
 
 async def get_settings():
-    """Get or create settings"""
     settings = await db.settings.find_one()
     if not settings:
         settings = {"bank_balance": 0, "petty_cash_balance": 0}
         await db.settings.insert_one(settings)
     return serialize_doc(settings)
 
-async def update_balances(transaction_type: str, mode: str, amount: float):
-    """Update balances based on transaction"""
-    settings = await get_settings()
-    
-    if transaction_type == "Income":
-        if mode == "Bank":
-            await db.settings.update_one({}, {"$inc": {"bank_balance": amount}}, upsert=True)
-        elif mode == "Petty Cash":
-            await db.settings.update_one({}, {"$inc": {"petty_cash_balance": amount}}, upsert=True)
-    elif transaction_type == "Expense":
-        if mode == "Bank":
-            await db.settings.update_one({}, {"$inc": {"bank_balance": -amount}}, upsert=True)
-        elif mode == "Petty Cash":
-            await db.settings.update_one({}, {"$inc": {"petty_cash_balance": -amount}}, upsert=True)
+async def update_balance_field(field: str, amount: float):
+    await db.settings.update_one({}, {"$inc": {field: amount}}, upsert=True)
 
 
 # ========== DASHBOARD ==========
 
 @api_router.get("/dashboard")
 async def get_dashboard():
-    """Get dashboard statistics"""
     try:
-        # Get settings for balances
         settings = await get_settings()
-        total_balance = settings.get("bank_balance", 0) + settings.get("petty_cash_balance", 0)
-        
-        # Calculate total receivables (pending amounts from projects)
+        bank_bal = settings.get("bank_balance", 0)
+        petty_bal = settings.get("petty_cash_balance", 0)
+
         projects = await db.projects.find().to_list(1000)
         total_receivables = sum(p.get("pending_amount", 0) for p in projects)
-        
-        # Calculate total expenses
-        expenses = await db.transactions.find({"type": "Expense"}).to_list(10000)
-        total_expenses = sum(e.get("amount", 0) for e in expenses)
-        
-        # Calculate total stock
-        inventory = await db.inventory.find_one()
-        if not inventory:
-            inventory = {"total_bags_purchased": 0, "bags_used": 0}
-            await db.inventory.insert_one(inventory)
-        
-        bags_used_in_projects = sum(p.get("bags_used", 0) for p in projects)
-        await db.inventory.update_one({}, {"$set": {"bags_used": bags_used_in_projects}}, upsert=True)
-        
-        total_stock = inventory.get("total_bags_purchased", 0) - bags_used_in_projects
-        
+
+        all_transactions = await db.transactions.find().to_list(10000)
+        total_income = sum(t["amount"] for t in all_transactions if t.get("type") == "Income")
+        total_expenses = sum(t["amount"] for t in all_transactions if t.get("type") == "Expense")
+
+        # Inventory per bag type
+        inv = await db.inventory.find_one() or {}
+        naturoplast_purchased = inv.get("naturoplast_purchased", 0)
+        iraniya_purchased = inv.get("iraniya_purchased", 0)
+
+        naturoplast_used = 0
+        iraniya_used = 0
+        for p in projects:
+            for entry in p.get("bag_usage_history", []):
+                if entry.get("bag_type") == "Naturoplast":
+                    naturoplast_used += entry.get("quantity", 0)
+                elif entry.get("bag_type") == "Iraniya":
+                    iraniya_used += entry.get("quantity", 0)
+
+        naturoplast_stock = naturoplast_purchased - naturoplast_used
+        iraniya_stock = iraniya_purchased - iraniya_used
+        total_stock = naturoplast_stock + iraniya_stock
+
+        # Partner total liabilities
+        partners = await db.partners.find().to_list(1000)
+        total_partner_balance = sum(p.get("current_balance", 0) for p in partners)
+
+        # Monthly breakdown for reports
+        monthly = {}
+        for t in all_transactions:
+            dt = t.get("date")
+            if isinstance(dt, str):
+                dt = datetime.fromisoformat(dt)
+            key = dt.strftime("%Y-%m") if dt else "unknown"
+            if key not in monthly:
+                monthly[key] = {"income": 0, "expense": 0}
+            if t["type"] == "Income":
+                monthly[key]["income"] += t["amount"]
+            else:
+                monthly[key]["expense"] += t["amount"]
+
+        # Bank transactions
+        bank_transactions = [serialize_doc(dict(t)) for t in all_transactions if t.get("mode") == "Bank"]
+        for bt in bank_transactions:
+            if "_id" in bt:
+                del bt["_id"]
+
         return {
-            "total_balance": total_balance,
-            "bank_balance": settings.get("bank_balance", 0),
-            "petty_cash_balance": settings.get("petty_cash_balance", 0),
+            "total_balance": bank_bal + petty_bal,
+            "bank_balance": bank_bal,
+            "petty_cash_balance": petty_bal,
             "total_receivables": total_receivables,
+            "total_income": total_income,
             "total_expenses": total_expenses,
-            "total_stock": total_stock
+            "profit_loss": total_income - total_expenses,
+            "total_stock": total_stock,
+            "naturoplast_stock": naturoplast_stock,
+            "iraniya_stock": iraniya_stock,
+            "naturoplast_purchased": naturoplast_purchased,
+            "iraniya_purchased": iraniya_purchased,
+            "naturoplast_used": naturoplast_used,
+            "iraniya_used": iraniya_used,
+            "total_partner_balance": total_partner_balance,
+            "monthly_breakdown": monthly,
+            "bank_transactions": bank_transactions,
         }
     except Exception as e:
-        logger.error(f"Error getting dashboard: {e}")
+        logger.error(f"Dashboard error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -187,171 +180,171 @@ async def get_dashboard():
 
 @api_router.get("/projects")
 async def get_projects():
-    """Get all projects"""
     try:
         projects = await db.projects.find().to_list(1000)
         return [serialize_doc(p) for p in projects]
     except Exception as e:
-        logger.error(f"Error getting projects: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.get("/projects/{project_id}")
+async def get_project_detail(project_id: str):
+    """Get project detail with linked transactions"""
+    try:
+        project = await db.projects.find_one({"_id": ObjectId(project_id)})
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+        project = serialize_doc(project)
+        # Get linked transactions
+        linked_txns = await db.transactions.find({"linked_project_id": project_id}).sort("date", -1).to_list(1000)
+        project["linked_transactions"] = [serialize_doc(t) for t in linked_txns]
+        return project
+    except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 @api_router.post("/projects")
 async def create_project(project: ProjectCreate):
-    """Create a new project"""
     try:
-        project_dict = project.dict()
-        project_dict["pending_amount"] = project_dict["invoiced_amount"] - project_dict["amount_received"]
-        project_dict["created_at"] = datetime.utcnow()
-        project_dict["updated_at"] = datetime.utcnow()
-        
-        result = await db.projects.insert_one(project_dict)
-        
-        # Get the created project and serialize it properly
-        created_project = await db.projects.find_one({"_id": result.inserted_id})
-        return serialize_doc(created_project)
+        d = project.dict()
+        bags_used = sum(e.get("quantity", 0) for e in d.get("bag_usage_history", []))
+        d["bags_used"] = bags_used
+        d["pending_amount"] = d["invoiced_amount"] - d["amount_received"]
+        d["created_at"] = datetime.now(timezone.utc)
+        d["updated_at"] = datetime.now(timezone.utc)
+        result = await db.projects.insert_one(d)
+        created = await db.projects.find_one({"_id": result.inserted_id})
+        return serialize_doc(created)
     except Exception as e:
-        logger.error(f"Error creating project: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @api_router.put("/projects/{project_id}")
 async def update_project(project_id: str, project: ProjectCreate):
-    """Update a project"""
     try:
-        project_dict = project.dict()
-        project_dict["pending_amount"] = project_dict["invoiced_amount"] - project_dict["amount_received"]
-        project_dict["updated_at"] = datetime.utcnow()
-        
-        result = await db.projects.update_one(
-            {"_id": ObjectId(project_id)},
-            {"$set": project_dict}
-        )
-        
+        d = project.dict()
+        bags_used = sum(e.get("quantity", 0) for e in d.get("bag_usage_history", []))
+        d["bags_used"] = bags_used
+        d["pending_amount"] = d["invoiced_amount"] - d["amount_received"]
+        d["updated_at"] = datetime.now(timezone.utc)
+        result = await db.projects.update_one({"_id": ObjectId(project_id)}, {"$set": d})
         if result.matched_count == 0:
             raise HTTPException(status_code=404, detail="Project not found")
-        
-        project_dict["id"] = project_id
-        return project_dict
+        updated = await db.projects.find_one({"_id": ObjectId(project_id)})
+        return serialize_doc(updated)
     except Exception as e:
-        logger.error(f"Error updating project: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.post("/projects/{project_id}/bag-usage")
+async def add_bag_usage(project_id: str, entry: BagUsageEntry):
+    """Add bag usage entry to a project"""
+    try:
+        project = await db.projects.find_one({"_id": ObjectId(project_id)})
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+        usage_entry = {"date": entry.date, "bag_type": entry.bag_type, "quantity": entry.quantity}
+        await db.projects.update_one(
+            {"_id": ObjectId(project_id)},
+            {"$push": {"bag_usage_history": usage_entry}, "$inc": {"bags_used": entry.quantity}}
+        )
+        updated = await db.projects.find_one({"_id": ObjectId(project_id)})
+        return serialize_doc(updated)
+    except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 @api_router.delete("/projects/{project_id}")
 async def delete_project(project_id: str):
-    """Delete a project"""
     try:
         result = await db.projects.delete_one({"_id": ObjectId(project_id)})
         if result.deleted_count == 0:
             raise HTTPException(status_code=404, detail="Project not found")
         return {"message": "Project deleted successfully"}
     except Exception as e:
-        logger.error(f"Error deleting project: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
 # ========== TRANSACTIONS ==========
 
 @api_router.get("/transactions")
-async def get_transactions(start_date: Optional[str] = None, end_date: Optional[str] = None):
-    """Get all transactions with optional date filtering"""
+async def get_transactions(start_date: Optional[str] = None, end_date: Optional[str] = None, mode: Optional[str] = None):
     try:
         query = {}
         if start_date and end_date:
-            query["date"] = {
-                "$gte": datetime.fromisoformat(start_date),
-                "$lte": datetime.fromisoformat(end_date)
-            }
-        
+            query["date"] = {"$gte": start_date, "$lte": end_date}
+        if mode:
+            query["mode"] = mode
         transactions = await db.transactions.find(query).sort("date", -1).to_list(10000)
         return [serialize_doc(t) for t in transactions]
     except Exception as e:
-        logger.error(f"Error getting transactions: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @api_router.post("/transactions")
 async def create_transaction(transaction: TransactionCreate):
-    """Create a new transaction and update balances"""
     try:
-        transaction_dict = transaction.dict()
-        transaction_dict["created_at"] = datetime.utcnow()
-        
-        result = await db.transactions.insert_one(transaction_dict)
-        
-        # Update balances if mode is not Partner
-        if transaction_dict["mode"] != "Partner":
-            await update_balances(
-                transaction_dict["type"],
-                transaction_dict["mode"],
-                transaction_dict["amount"]
-            )
-        
-        # Get the created transaction and serialize it properly
-        created_transaction = await db.transactions.find_one({"_id": result.inserted_id})
-        return serialize_doc(created_transaction)
+        d = transaction.dict()
+        d["created_at"] = datetime.now(timezone.utc)
+        # Resolve project name if linked
+        if d.get("linked_project_id") and not d.get("linked_project_name"):
+            proj = await db.projects.find_one({"_id": ObjectId(d["linked_project_id"])})
+            if proj:
+                d["linked_project_name"] = proj.get("name", "")
+        result = await db.transactions.insert_one(d)
+        # Update balances
+        if d["mode"] == "Bank":
+            amt = d["amount"] if d["type"] == "Income" else -d["amount"]
+            await update_balance_field("bank_balance", amt)
+        elif d["mode"] == "Petty Cash":
+            amt = d["amount"] if d["type"] == "Income" else -d["amount"]
+            await update_balance_field("petty_cash_balance", amt)
+        created = await db.transactions.find_one({"_id": result.inserted_id})
+        return serialize_doc(created)
     except Exception as e:
-        logger.error(f"Error creating transaction: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @api_router.put("/transactions/{transaction_id}")
 async def update_transaction(transaction_id: str, transaction: TransactionCreate):
-    """Update a transaction"""
     try:
-        # Get old transaction to reverse its effect on balances
-        old_transaction = await db.transactions.find_one({"_id": ObjectId(transaction_id)})
-        if not old_transaction:
+        old = await db.transactions.find_one({"_id": ObjectId(transaction_id)})
+        if not old:
             raise HTTPException(status_code=404, detail="Transaction not found")
-        
-        # Reverse old transaction effect
-        if old_transaction["mode"] != "Partner":
-            reverse_type = "Expense" if old_transaction["type"] == "Income" else "Income"
-            await update_balances(
-                reverse_type,
-                old_transaction["mode"],
-                old_transaction["amount"]
-            )
-        
-        # Update transaction
-        transaction_dict = transaction.dict()
-        result = await db.transactions.update_one(
-            {"_id": ObjectId(transaction_id)},
-            {"$set": transaction_dict}
-        )
-        
-        # Apply new transaction effect
-        if transaction_dict["mode"] != "Partner":
-            await update_balances(
-                transaction_dict["type"],
-                transaction_dict["mode"],
-                transaction_dict["amount"]
-            )
-        
-        transaction_dict["id"] = transaction_id
-        return transaction_dict
+        # Reverse old effect
+        if old["mode"] == "Bank":
+            rev = -old["amount"] if old["type"] == "Income" else old["amount"]
+            await update_balance_field("bank_balance", rev)
+        elif old["mode"] == "Petty Cash":
+            rev = -old["amount"] if old["type"] == "Income" else old["amount"]
+            await update_balance_field("petty_cash_balance", rev)
+
+        d = transaction.dict()
+        if d.get("linked_project_id") and not d.get("linked_project_name"):
+            proj = await db.projects.find_one({"_id": ObjectId(d["linked_project_id"])})
+            if proj:
+                d["linked_project_name"] = proj.get("name", "")
+        await db.transactions.update_one({"_id": ObjectId(transaction_id)}, {"$set": d})
+        # Apply new effect
+        if d["mode"] == "Bank":
+            amt = d["amount"] if d["type"] == "Income" else -d["amount"]
+            await update_balance_field("bank_balance", amt)
+        elif d["mode"] == "Petty Cash":
+            amt = d["amount"] if d["type"] == "Income" else -d["amount"]
+            await update_balance_field("petty_cash_balance", amt)
+        updated = await db.transactions.find_one({"_id": ObjectId(transaction_id)})
+        return serialize_doc(updated)
     except Exception as e:
-        logger.error(f"Error updating transaction: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @api_router.delete("/transactions/{transaction_id}")
 async def delete_transaction(transaction_id: str):
-    """Delete a transaction"""
     try:
-        # Get transaction to reverse its effect
-        transaction = await db.transactions.find_one({"_id": ObjectId(transaction_id)})
-        if not transaction:
+        txn = await db.transactions.find_one({"_id": ObjectId(transaction_id)})
+        if not txn:
             raise HTTPException(status_code=404, detail="Transaction not found")
-        
-        # Reverse transaction effect
-        if transaction["mode"] != "Partner":
-            reverse_type = "Expense" if transaction["type"] == "Income" else "Income"
-            await update_balances(
-                reverse_type,
-                transaction["mode"],
-                transaction["amount"]
-            )
-        
-        result = await db.transactions.delete_one({"_id": ObjectId(transaction_id)})
+        if txn["mode"] == "Bank":
+            rev = -txn["amount"] if txn["type"] == "Income" else txn["amount"]
+            await update_balance_field("bank_balance", rev)
+        elif txn["mode"] == "Petty Cash":
+            rev = -txn["amount"] if txn["type"] == "Income" else txn["amount"]
+            await update_balance_field("petty_cash_balance", rev)
+        await db.transactions.delete_one({"_id": ObjectId(transaction_id)})
         return {"message": "Transaction deleted successfully"}
     except Exception as e:
-        logger.error(f"Error deleting transaction: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -359,53 +352,66 @@ async def delete_transaction(transaction_id: str):
 
 @api_router.get("/inventory")
 async def get_inventory():
-    """Get current inventory"""
     try:
-        inventory = await db.inventory.find_one()
-        if not inventory:
-            inventory = {"total_bags_purchased": 0, "bags_used": 0}
-            await db.inventory.insert_one(inventory)
-        
-        # Calculate bags used from projects
+        inv = await db.inventory.find_one()
+        if not inv:
+            inv = {"naturoplast_purchased": 0, "iraniya_purchased": 0}
+            await db.inventory.insert_one(inv)
+
         projects = await db.projects.find().to_list(1000)
-        bags_used = sum(p.get("bags_used", 0) for p in projects)
-        
-        await db.inventory.update_one({}, {"$set": {"bags_used": bags_used}}, upsert=True)
-        
-        inventory = serialize_doc(inventory)
-        inventory["bags_used"] = bags_used
-        inventory["current_stock"] = inventory.get("total_bags_purchased", 0) - bags_used
-        
-        return inventory
+        naturoplast_used = 0
+        iraniya_used = 0
+        for p in projects:
+            for e in p.get("bag_usage_history", []):
+                if e.get("bag_type") == "Naturoplast":
+                    naturoplast_used += e.get("quantity", 0)
+                elif e.get("bag_type") == "Iraniya":
+                    iraniya_used += e.get("quantity", 0)
+
+        inv = serialize_doc(inv)
+        np = inv.get("naturoplast_purchased", 0)
+        ip = inv.get("iraniya_purchased", 0)
+        inv["naturoplast_purchased"] = np
+        inv["iraniya_purchased"] = ip
+        inv["naturoplast_used"] = naturoplast_used
+        inv["iraniya_used"] = iraniya_used
+        inv["naturoplast_stock"] = np - naturoplast_used
+        inv["iraniya_stock"] = ip - iraniya_used
+        inv["total_purchased"] = np + ip
+        inv["total_used"] = naturoplast_used + iraniya_used
+        inv["current_stock"] = (np + ip) - (naturoplast_used + iraniya_used)
+
+        # Get purchase history
+        purchases = await db.inventory_purchases.find().sort("date", -1).to_list(1000)
+        inv["purchase_history"] = [serialize_doc(p) for p in purchases]
+
+        return inv
     except Exception as e:
-        logger.error(f"Error getting inventory: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @api_router.post("/inventory/purchase")
 async def add_inventory_purchase(purchase: InventoryPurchase):
-    """Add bags purchase to inventory"""
     try:
-        # Update inventory
-        await db.inventory.update_one(
-            {},
-            {"$inc": {"total_bags_purchased": purchase.bags}},
-            upsert=True
-        )
-        
+        field = "naturoplast_purchased" if purchase.bag_type == "Naturoplast" else "iraniya_purchased"
+        await db.inventory.update_one({}, {"$inc": {field: purchase.bags}}, upsert=True)
+
+        # Save purchase record
+        record = {
+            "bags": purchase.bags, "bag_type": purchase.bag_type,
+            "amount": purchase.amount, "date": purchase.date,
+            "mode": purchase.mode, "created_at": datetime.now(timezone.utc)
+        }
+        await db.inventory_purchases.insert_one(record)
+
         # Create expense transaction
-        transaction = TransactionCreate(
-            date=purchase.date,
-            amount=purchase.amount,
-            type="Expense",
-            mode="Bank",
-            category="Bags",
-            description=f"Purchase of {purchase.bags} bags"
+        txn = TransactionCreate(
+            date=purchase.date, amount=purchase.amount,
+            type="Expense", mode=purchase.mode, category="Bags",
+            description=f"Purchase of {purchase.bags} {purchase.bag_type} bags"
         )
-        await create_transaction(transaction)
-        
+        await create_transaction(txn)
         return {"message": "Purchase added successfully"}
     except Exception as e:
-        logger.error(f"Error adding purchase: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -413,103 +419,107 @@ async def add_inventory_purchase(purchase: InventoryPurchase):
 
 @api_router.get("/partners")
 async def get_partners():
-    """Get all partners"""
     try:
         partners = await db.partners.find().to_list(1000)
-        return [serialize_doc(p) for p in partners]
+        result = []
+        for p in partners:
+            p = serialize_doc(p)
+            # Get partner transaction history
+            txn_history = await db.partner_transactions.find({"partner_id": p["id"]}).sort("date", -1).to_list(1000)
+            p["transaction_history"] = [serialize_doc(t) for t in txn_history]
+            result.append(p)
+        return result
     except Exception as e:
-        logger.error(f"Error getting partners: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @api_router.post("/partners")
 async def create_partner(partner: PartnerCreate):
-    """Create a new partner"""
     try:
-        partner_dict = partner.dict()
-        partner_dict["total_withdrawals"] = 0
-        partner_dict["current_balance"] = partner_dict["total_investment"]
-        partner_dict["created_at"] = datetime.utcnow()
-        partner_dict["updated_at"] = datetime.utcnow()
-        
-        result = await db.partners.insert_one(partner_dict)
-        
-        # Get the created partner and serialize it properly
-        created_partner = await db.partners.find_one({"_id": result.inserted_id})
-        return serialize_doc(created_partner)
+        d = partner.dict()
+        d["total_withdrawals"] = 0
+        d["current_balance"] = d["total_investment"]
+        d["created_at"] = datetime.now(timezone.utc)
+        d["updated_at"] = datetime.now(timezone.utc)
+        result = await db.partners.insert_one(d)
+        created = await db.partners.find_one({"_id": result.inserted_id})
+        return serialize_doc(created)
     except Exception as e:
-        logger.error(f"Error creating partner: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @api_router.put("/partners/{partner_id}")
 async def update_partner(partner_id: str, partner: PartnerCreate):
-    """Update a partner"""
     try:
-        existing_partner = await db.partners.find_one({"_id": ObjectId(partner_id)})
-        if not existing_partner:
+        existing = await db.partners.find_one({"_id": ObjectId(partner_id)})
+        if not existing:
             raise HTTPException(status_code=404, detail="Partner not found")
-        
-        partner_dict = partner.dict()
-        partner_dict["current_balance"] = partner_dict["total_investment"] - existing_partner.get("total_withdrawals", 0)
-        partner_dict["updated_at"] = datetime.utcnow()
-        
-        await db.partners.update_one(
-            {"_id": ObjectId(partner_id)},
-            {"$set": partner_dict}
-        )
-        
-        partner_dict["id"] = partner_id
-        partner_dict["total_withdrawals"] = existing_partner.get("total_withdrawals", 0)
-        return partner_dict
+        d = partner.dict()
+        d["current_balance"] = d["total_investment"] - existing.get("total_withdrawals", 0)
+        d["updated_at"] = datetime.now(timezone.utc)
+        await db.partners.update_one({"_id": ObjectId(partner_id)}, {"$set": d})
+        updated = await db.partners.find_one({"_id": ObjectId(partner_id)})
+        return serialize_doc(updated)
     except Exception as e:
-        logger.error(f"Error updating partner: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @api_router.delete("/partners/{partner_id}")
 async def delete_partner(partner_id: str):
-    """Delete a partner"""
     try:
         result = await db.partners.delete_one({"_id": ObjectId(partner_id)})
         if result.deleted_count == 0:
             raise HTTPException(status_code=404, detail="Partner not found")
         return {"message": "Partner deleted successfully"}
     except Exception as e:
-        logger.error(f"Error deleting partner: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @api_router.post("/partners/transaction")
 async def partner_transaction(transaction: PartnerTransaction):
-    """Add investment or withdrawal for a partner"""
+    """Partner investment/withdrawal - affects bank balance"""
     try:
         partner = await db.partners.find_one({"_id": ObjectId(transaction.partner_id)})
         if not partner:
             raise HTTPException(status_code=404, detail="Partner not found")
-        
+        partner_name = partner.get("name", "Partner")
+
         if transaction.type == "Investment":
             await db.partners.update_one(
                 {"_id": ObjectId(transaction.partner_id)},
-                {
-                    "$inc": {
-                        "total_investment": transaction.amount,
-                        "current_balance": transaction.amount
-                    },
-                    "$set": {"updated_at": datetime.utcnow()}
-                }
+                {"$inc": {"total_investment": transaction.amount, "current_balance": transaction.amount},
+                 "$set": {"updated_at": datetime.now(timezone.utc)}}
             )
+            # Investment adds to bank
+            await update_balance_field("bank_balance", transaction.amount)
+            # Create bank transaction entry
+            txn = TransactionCreate(
+                date=transaction.date, amount=transaction.amount,
+                type="Income", mode="Bank", category=None,
+                description=f"Investment from {partner_name}"
+            )
+            await create_transaction(txn)
         elif transaction.type == "Withdrawal":
             await db.partners.update_one(
                 {"_id": ObjectId(transaction.partner_id)},
-                {
-                    "$inc": {
-                        "total_withdrawals": transaction.amount,
-                        "current_balance": -transaction.amount
-                    },
-                    "$set": {"updated_at": datetime.utcnow()}
-                }
+                {"$inc": {"total_withdrawals": transaction.amount, "current_balance": -transaction.amount},
+                 "$set": {"updated_at": datetime.now(timezone.utc)}}
             )
-        
+            # Withdrawal deducts from bank
+            await update_balance_field("bank_balance", -transaction.amount)
+            txn = TransactionCreate(
+                date=transaction.date, amount=transaction.amount,
+                type="Expense", mode="Bank", category=None,
+                description=f"Withdrawal by {partner_name}"
+            )
+            await create_transaction(txn)
+
+        # Save partner transaction record
+        record = {
+            "partner_id": transaction.partner_id, "partner_name": partner_name,
+            "amount": transaction.amount, "type": transaction.type,
+            "date": transaction.date, "created_at": datetime.now(timezone.utc)
+        }
+        await db.partner_transactions.insert_one(record)
+
         return {"message": "Transaction added successfully"}
     except Exception as e:
-        logger.error(f"Error adding partner transaction: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -517,52 +527,40 @@ async def partner_transaction(transaction: PartnerTransaction):
 
 @api_router.get("/export/transactions")
 async def export_transactions(format: str = "csv", start_date: Optional[str] = None, end_date: Optional[str] = None):
-    """Export transactions as CSV"""
     try:
         query = {}
         if start_date and end_date:
-            query["date"] = {
-                "$gte": datetime.fromisoformat(start_date),
-                "$lte": datetime.fromisoformat(end_date)
-            }
-        
+            query["date"] = {"$gte": start_date, "$lte": end_date}
         transactions = await db.transactions.find(query).sort("date", -1).to_list(10000)
-        
-        if format == "csv":
-            output = io.StringIO()
-            writer = csv.DictWriter(output, fieldnames=["Date", "Type", "Mode", "Category", "Amount", "Description"])
-            writer.writeheader()
-            
-            for t in transactions:
-                writer.writerow({
-                    "Date": t["date"].strftime("%Y-%m-%d"),
-                    "Type": t["type"],
-                    "Mode": t["mode"],
-                    "Category": t.get("category", ""),
-                    "Amount": t["amount"],
-                    "Description": t.get("description", "")
-                })
-            
-            output.seek(0)
-            return StreamingResponse(
-                iter([output.getvalue()]),
-                media_type="text/csv",
-                headers={"Content-Disposition": "attachment; filename=transactions.csv"}
-            )
+
+        output = io.StringIO()
+        writer = csv.DictWriter(output, fieldnames=["Date", "Type", "Mode", "Category", "Amount", "Description", "Project"])
+        writer.writeheader()
+        for t in transactions:
+            dt = t.get("date", "")
+            if isinstance(dt, datetime):
+                dt = dt.strftime("%Y-%m-%d")
+            writer.writerow({
+                "Date": dt, "Type": t["type"], "Mode": t["mode"],
+                "Category": t.get("category", ""), "Amount": t["amount"],
+                "Description": t.get("description", ""),
+                "Project": t.get("linked_project_name", "")
+            })
+        output.seek(0)
+        return StreamingResponse(
+            iter([output.getvalue()]), media_type="text/csv",
+            headers={"Content-Disposition": "attachment; filename=transactions.csv"}
+        )
     except Exception as e:
-        logger.error(f"Error exporting transactions: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# Include the router in the main app
+# Include router & middleware
 app.include_router(api_router)
 
 app.add_middleware(
-    CORSMiddleware,
-    allow_credentials=True,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
+    CORSMiddleware, allow_credentials=True,
+    allow_origins=["*"], allow_methods=["*"], allow_headers=["*"],
 )
 
 @app.on_event("shutdown")

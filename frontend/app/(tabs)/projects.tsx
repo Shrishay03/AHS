@@ -1,387 +1,315 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
-  View,
-  Text,
-  StyleSheet,
-  ScrollView,
-  TouchableOpacity,
-  Modal,
-  TextInput,
-  Alert,
-  ActivityIndicator,
-  RefreshControl,
+  View, Text, StyleSheet, ScrollView, TouchableOpacity, Modal,
+  TextInput, Alert, ActivityIndicator, RefreshControl,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useFocusEffect } from 'expo-router';
 
 const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL;
-
-const THEME = {
-  primary: '#2E7D32',
-  secondary: '#1976D2',
-  background: '#F5F5F5',
-  card: '#FFFFFF',
-  text: '#212121',
-  textLight: '#757575',
-  success: '#4CAF50',
-  warning: '#FF9800',
-  error: '#F44336',
-};
+const T = { primary: '#2E7D32', secondary: '#1976D2', bg: '#F5F5F5', card: '#FFF', text: '#212121', muted: '#757575', ok: '#4CAF50', warn: '#FF9800', err: '#F44336' };
 
 export default function Projects() {
   const [projects, setProjects] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [modalVisible, setModalVisible] = useState(false);
+  const [bagModalVisible, setBagModalVisible] = useState(false);
+  const [detailId, setDetailId] = useState<string | null>(null);
+  const [detailData, setDetailData] = useState<any>(null);
   const [editingProject, setEditingProject] = useState<any>(null);
   const [formData, setFormData] = useState({
-    name: '',
-    initial_plaster_area: '',
-    final_plastered_area: '',
-    bags_used: '',
-    invoiced_amount: '',
-    amount_received: '',
-    status: 'Pending',
+    name: '', initial_plaster_area: '', final_plastered_area: '',
+    invoiced_amount: '', amount_received: '', status: 'Pending',
   });
+  const [bagForm, setBagForm] = useState({ bag_type: 'Naturoplast', quantity: '', date: new Date().toISOString().slice(0, 10) });
+  const [selectedProjectForBag, setSelectedProjectForBag] = useState<any>(null);
 
   const fetchProjects = async () => {
     try {
-      const response = await fetch(`${BACKEND_URL}/api/projects`);
-      const data = await response.json();
-      setProjects(data);
-    } catch (error) {
-      console.error('Error fetching projects:', error);
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
+      const r = await fetch(`${BACKEND_URL}/api/projects`);
+      setProjects(await r.json());
+    } catch (e) { console.error(e); }
+    finally { setLoading(false); setRefreshing(false); }
   };
 
-  useEffect(() => {
-    fetchProjects();
-  }, []);
-
-  const onRefresh = () => {
-    setRefreshing(true);
-    fetchProjects();
+  const fetchDetail = async (id: string) => {
+    try {
+      const r = await fetch(`${BACKEND_URL}/api/projects/${id}`);
+      setDetailData(await r.json());
+    } catch (e) { console.error(e); }
   };
 
-  const openAddModal = () => {
+  useFocusEffect(useCallback(() => { fetchProjects(); }, []));
+
+  const fmt = (n: number) => `\u20b9${(n || 0).toLocaleString('en-IN')}`;
+
+  const openAdd = () => {
     setEditingProject(null);
-    setFormData({
-      name: '',
-      initial_plaster_area: '',
-      final_plastered_area: '',
-      bags_used: '',
-      invoiced_amount: '',
-      amount_received: '',
-      status: 'Pending',
-    });
+    setFormData({ name: '', initial_plaster_area: '', final_plastered_area: '', invoiced_amount: '', amount_received: '', status: 'Pending' });
     setModalVisible(true);
   };
 
-  const openEditModal = (project: any) => {
-    setEditingProject(project);
+  const openEdit = (p: any) => {
+    setEditingProject(p);
     setFormData({
-      name: project.name,
-      initial_plaster_area: project.initial_plaster_area.toString(),
-      final_plastered_area: project.final_plastered_area.toString(),
-      bags_used: project.bags_used.toString(),
-      invoiced_amount: project.invoiced_amount.toString(),
-      amount_received: project.amount_received.toString(),
-      status: project.status,
+      name: p.name, initial_plaster_area: p.initial_plaster_area?.toString() || '',
+      final_plastered_area: p.final_plastered_area?.toString() || '',
+      invoiced_amount: p.invoiced_amount?.toString() || '',
+      amount_received: p.amount_received?.toString() || '', status: p.status,
     });
     setModalVisible(true);
   };
 
   const handleSave = async () => {
-    if (!formData.name || !formData.invoiced_amount) {
-      Alert.alert('Error', 'Please fill in all required fields');
-      return;
-    }
-
+    if (!formData.name || !formData.invoiced_amount) { Alert.alert('Error', 'Name and Invoiced Amount are required'); return; }
     try {
       const payload = {
         name: formData.name,
         initial_plaster_area: parseFloat(formData.initial_plaster_area) || 0,
         final_plastered_area: parseFloat(formData.final_plastered_area) || 0,
-        bags_used: parseInt(formData.bags_used) || 0,
+        bag_usage_history: editingProject?.bag_usage_history || [],
         invoiced_amount: parseFloat(formData.invoiced_amount) || 0,
         amount_received: parseFloat(formData.amount_received) || 0,
         status: formData.status,
       };
+      const url = editingProject ? `${BACKEND_URL}/api/projects/${editingProject.id}` : `${BACKEND_URL}/api/projects`;
+      const r = await fetch(url, { method: editingProject ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      if (r.ok) { setModalVisible(false); fetchProjects(); }
+    } catch (e) { Alert.alert('Error', 'Failed to save'); }
+  };
 
-      const url = editingProject
-        ? `${BACKEND_URL}/api/projects/${editingProject.id}`
-        : `${BACKEND_URL}/api/projects`;
-      
-      const method = editingProject ? 'PUT' : 'POST';
-
-      const response = await fetch(url, {
-        method,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-
-      if (response.ok) {
-        setModalVisible(false);
+  const handleDelete = (p: any) => {
+    Alert.alert('Delete Project', `Delete "${p.name}"?`, [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Delete', style: 'destructive', onPress: async () => {
+        await fetch(`${BACKEND_URL}/api/projects/${p.id}`, { method: 'DELETE' });
         fetchProjects();
-      }
-    } catch (error) {
-      console.error('Error saving project:', error);
-      Alert.alert('Error', 'Failed to save project');
-    }
+      }},
+    ]);
   };
 
-  const handleDelete = (project: any) => {
-    Alert.alert(
-      'Delete Project',
-      `Are you sure you want to delete "${project.name}"?`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              await fetch(`${BACKEND_URL}/api/projects/${project.id}`, {
-                method: 'DELETE',
-              });
-              fetchProjects();
-            } catch (error) {
-              console.error('Error deleting project:', error);
-            }
-          },
-        },
-      ]
-    );
+  const openBagUsage = (p: any) => {
+    setSelectedProjectForBag(p);
+    setBagForm({ bag_type: 'Naturoplast', quantity: '', date: new Date().toISOString().slice(0, 10) });
+    setBagModalVisible(true);
   };
 
-  if (loading) {
+  const handleAddBagUsage = async () => {
+    if (!bagForm.quantity) { Alert.alert('Error', 'Enter quantity'); return; }
+    try {
+      const payload = {
+        project_id: selectedProjectForBag.id,
+        date: bagForm.date, bag_type: bagForm.bag_type,
+        quantity: parseInt(bagForm.quantity),
+      };
+      const r = await fetch(`${BACKEND_URL}/api/projects/${selectedProjectForBag.id}/bag-usage`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+      });
+      if (r.ok) { setBagModalVisible(false); fetchProjects(); Alert.alert('Success', 'Bag usage added'); }
+    } catch (e) { Alert.alert('Error', 'Failed to add'); }
+  };
+
+  const openDetail = (p: any) => { setDetailId(p.id); fetchDetail(p.id); };
+
+  if (loading) return <View style={s.center}><ActivityIndicator size="large" color={T.primary} /></View>;
+
+  // Detail view
+  if (detailId && detailData) {
     return (
-      <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color={THEME.primary} />
+      <View style={s.container}>
+        <View style={{ backgroundColor: T.primary, padding: 16, flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+          <TouchableOpacity onPress={() => { setDetailId(null); setDetailData(null); }}>
+            <Ionicons name="arrow-back" size={24} color="#FFF" />
+          </TouchableOpacity>
+          <Text style={{ fontSize: 18, fontWeight: 'bold', color: '#FFF', flex: 1 }}>{detailData.name}</Text>
+          <View style={{ backgroundColor: detailData.status === 'Completed' ? '#E8F5E9' : '#FFF3E0', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12 }}>
+            <Text style={{ fontSize: 11, fontWeight: '600' }}>{detailData.status}</Text>
+          </View>
+        </View>
+        <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 16 }}>
+          {/* Project Info */}
+          <View style={s.card}>
+            <Text style={{ fontSize: 14, fontWeight: 'bold', color: T.text, marginBottom: 12 }}>Project Details</Text>
+            <Row label="Initial Area" value={`${detailData.initial_plaster_area} sq.ft`} />
+            <Row label="Final Area" value={`${detailData.final_plastered_area} sq.ft`} />
+            <Row label="Bags Used" value={`${detailData.bags_used || 0}`} />
+            <Row label="Invoiced" value={fmt(detailData.invoiced_amount)} />
+            <Row label="Received" value={fmt(detailData.amount_received)} />
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 8, marginTop: 8, borderTopWidth: 2, borderTopColor: T.warn }}>
+              <Text style={{ fontSize: 14, fontWeight: 'bold', color: T.text }}>Pending</Text>
+              <Text style={{ fontSize: 16, fontWeight: 'bold', color: T.warn }}>{fmt(detailData.pending_amount)}</Text>
+            </View>
+          </View>
+
+          {/* Bag Usage History */}
+          <View style={s.card}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+              <Text style={{ fontSize: 14, fontWeight: 'bold', color: T.text }}>Bag Usage History</Text>
+              <TouchableOpacity testID="add-bag-usage-btn" style={{ backgroundColor: T.primary, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 6 }}
+                onPress={() => openBagUsage(detailData)}>
+                <Text style={{ color: '#FFF', fontSize: 12, fontWeight: '600' }}>+ Add</Text>
+              </TouchableOpacity>
+            </View>
+            {(detailData.bag_usage_history || []).length === 0 ? (
+              <Text style={{ color: T.muted, fontSize: 13 }}>No bag usage recorded yet</Text>
+            ) : (
+              (detailData.bag_usage_history || []).map((e: any, i: number) => (
+                <View key={i} style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: '#F0F0F0' }}>
+                  <View>
+                    <Text style={{ fontSize: 13, fontWeight: '600', color: T.text }}>{e.bag_type}</Text>
+                    <Text style={{ fontSize: 11, color: T.muted }}>{typeof e.date === 'string' ? e.date.slice(0, 10) : ''}</Text>
+                  </View>
+                  <Text style={{ fontSize: 14, fontWeight: 'bold', color: T.secondary }}>{e.quantity} bags</Text>
+                </View>
+              ))
+            )}
+          </View>
+
+          {/* Linked Transactions */}
+          <View style={s.card}>
+            <Text style={{ fontSize: 14, fontWeight: 'bold', color: T.text, marginBottom: 12 }}>Linked Transactions</Text>
+            {(detailData.linked_transactions || []).length === 0 ? (
+              <Text style={{ color: T.muted, fontSize: 13 }}>No transactions linked to this project</Text>
+            ) : (
+              (detailData.linked_transactions || []).map((t: any, i: number) => (
+                <View key={i} style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: '#F0F0F0' }}>
+                  <View>
+                    <Text style={{ fontSize: 13, fontWeight: '600', color: T.text }}>{t.description || t.category || t.type}</Text>
+                    <Text style={{ fontSize: 11, color: T.muted }}>{typeof t.date === 'string' ? t.date.slice(0, 10) : ''} | {t.mode}</Text>
+                  </View>
+                  <Text style={{ fontSize: 14, fontWeight: 'bold', color: t.type === 'Income' ? T.ok : T.err }}>
+                    {t.type === 'Income' ? '+' : '-'}{fmt(t.amount)}
+                  </Text>
+                </View>
+              ))
+            )}
+          </View>
+        </ScrollView>
       </View>
     );
   }
 
+  // List view
   return (
-    <View style={styles.container}>
-      <ScrollView
-        style={styles.scrollView}
-        contentContainerStyle={styles.contentContainer}
-        refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={[THEME.primary]} />
-        }
-      >
+    <View style={s.container}>
+      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 16, paddingBottom: 80 }}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); fetchProjects(); }} colors={[T.primary]} />}>
         {projects.length === 0 ? (
-          <View style={styles.emptyState}>
-            <Ionicons name="folder-open-outline" size={64} color={THEME.textLight} />
-            <Text style={styles.emptyText}>No projects yet</Text>
-            <Text style={styles.emptySubtext}>Tap the + button to add your first project</Text>
+          <View style={{ alignItems: 'center', paddingVertical: 80 }}>
+            <Ionicons name="folder-open-outline" size={64} color={T.muted} />
+            <Text style={{ fontSize: 18, fontWeight: '600', color: T.text, marginTop: 16 }}>No projects yet</Text>
           </View>
         ) : (
-          projects.map((project) => (
-            <View key={project.id} style={styles.projectCard}>
-              <View style={styles.projectHeader}>
-                <Text style={styles.projectName}>{project.name}</Text>
-                <View
-                  style={[
-                    styles.statusBadge,
-                    project.status === 'Completed'
-                      ? styles.completedBadge
-                      : styles.pendingBadge,
-                  ]}
-                >
-                  <Text style={styles.statusText}>{project.status}</Text>
+          projects.map((p) => (
+            <TouchableOpacity key={p.id} style={s.card} onPress={() => openDetail(p)} testID={`project-card-${p.id}`}>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                <Text style={{ fontSize: 16, fontWeight: 'bold', color: T.text, flex: 1 }}>{p.name}</Text>
+                <View style={{ backgroundColor: p.status === 'Completed' ? '#E8F5E9' : '#FFF3E0', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12 }}>
+                  <Text style={{ fontSize: 11, fontWeight: '600' }}>{p.status}</Text>
                 </View>
               </View>
-
-              <View style={styles.projectDetails}>
-                <View style={styles.detailRow}>
-                  <Text style={styles.detailLabel}>Area (Initial/Final):</Text>
-                  <Text style={styles.detailValue}>
-                    {project.initial_plaster_area} / {project.final_plastered_area} sq.ft
-                  </Text>
-                </View>
-                <View style={styles.detailRow}>
-                  <Text style={styles.detailLabel}>Bags Used:</Text>
-                  <Text style={styles.detailValue}>{project.bags_used}</Text>
-                </View>
-                <View style={styles.detailRow}>
-                  <Text style={styles.detailLabel}>Invoiced:</Text>
-                  <Text style={styles.detailValue}>
-                    ₹{project.invoiced_amount.toLocaleString('en-IN')}
-                  </Text>
-                </View>
-                <View style={styles.detailRow}>
-                  <Text style={styles.detailLabel}>Received:</Text>
-                  <Text style={styles.detailValue}>
-                    ₹{project.amount_received.toLocaleString('en-IN')}
-                  </Text>
-                </View>
-                <View style={[styles.detailRow, styles.pendingRow]}>
-                  <Text style={styles.detailLabel}>Pending:</Text>
-                  <Text style={[styles.detailValue, styles.pendingAmount]}>
-                    ₹{project.pending_amount.toLocaleString('en-IN')}
-                  </Text>
-                </View>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 }}>
+                <Text style={{ fontSize: 12, color: T.muted }}>Invoiced: {fmt(p.invoiced_amount)}</Text>
+                <Text style={{ fontSize: 12, color: T.warn }}>Pending: {fmt(p.pending_amount)}</Text>
               </View>
-
-              <View style={styles.projectActions}>
-                <TouchableOpacity
-                  style={styles.actionButton}
-                  onPress={() => openEditModal(project)}
-                >
-                  <Ionicons name="create-outline" size={20} color={THEME.secondary} />
-                  <Text style={styles.actionButtonText}>Edit</Text>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                <Text style={{ fontSize: 12, color: T.muted }}>Bags: {p.bags_used || 0}</Text>
+                <Text style={{ fontSize: 12, color: T.muted }}>Area: {p.initial_plaster_area}/{p.final_plastered_area} sq.ft</Text>
+              </View>
+              <View style={{ flexDirection: 'row', gap: 8, marginTop: 12 }}>
+                <TouchableOpacity testID={`add-bags-${p.id}`} style={[s.actBtn, { backgroundColor: '#E8F5E9' }]} onPress={() => openBagUsage(p)}>
+                  <Ionicons name="cube-outline" size={16} color={T.primary} />
+                  <Text style={{ fontSize: 12, fontWeight: '600', color: T.primary }}>Add Bags</Text>
                 </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.actionButton, styles.deleteButton]}
-                  onPress={() => handleDelete(project)}
-                >
-                  <Ionicons name="trash-outline" size={20} color={THEME.error} />
-                  <Text style={[styles.actionButtonText, styles.deleteButtonText]}>Delete</Text>
+                <TouchableOpacity style={[s.actBtn, { backgroundColor: '#E3F2FD' }]} onPress={() => openEdit(p)}>
+                  <Ionicons name="create-outline" size={16} color={T.secondary} />
+                  <Text style={{ fontSize: 12, fontWeight: '600', color: T.secondary }}>Edit</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={[s.actBtn, { backgroundColor: '#FFEBEE' }]} onPress={() => handleDelete(p)}>
+                  <Ionicons name="trash-outline" size={16} color={T.err} />
                 </TouchableOpacity>
               </View>
-            </View>
+            </TouchableOpacity>
           ))
         )}
       </ScrollView>
 
-      {/* Floating Action Button */}
-      <TouchableOpacity style={styles.fab} onPress={openAddModal}>
-        <Ionicons name="add" size={28} color="#FFFFFF" />
+      <TouchableOpacity testID="add-project-fab" style={s.fab} onPress={openAdd}>
+        <Ionicons name="add" size={28} color="#FFF" />
       </TouchableOpacity>
 
-      {/* Add/Edit Modal */}
-      <Modal
-        animationType="slide"
-        transparent={true}
-        visible={modalVisible}
-        onRequestClose={() => setModalVisible(false)}
-      >
-        <View style={styles.modalContainer}>
-          <View style={styles.modalContent}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>
-                {editingProject ? 'Edit Project' : 'Add Project'}
-              </Text>
-              <TouchableOpacity onPress={() => setModalVisible(false)}>
-                <Ionicons name="close" size={28} color={THEME.text} />
-              </TouchableOpacity>
+      {/* Add/Edit Project Modal */}
+      <Modal animationType="slide" transparent visible={modalVisible} onRequestClose={() => setModalVisible(false)}>
+        <View style={s.modalBg}>
+          <View style={s.modalBox}>
+            <View style={s.modalHeader}>
+              <Text style={{ fontSize: 18, fontWeight: 'bold', color: T.text }}>{editingProject ? 'Edit Project' : 'Add Project'}</Text>
+              <TouchableOpacity onPress={() => setModalVisible(false)}><Ionicons name="close" size={26} color={T.text} /></TouchableOpacity>
             </View>
-
-            <ScrollView style={styles.modalForm}>
-              <Text style={styles.inputLabel}>Project Name *</Text>
-              <TextInput
-                style={styles.input}
-                value={formData.name}
-                onChangeText={(text) => setFormData({ ...formData, name: text })}
-                placeholder="Enter project name"
-              />
-
-              <Text style={styles.inputLabel}>Initial Plaster Area (sq.ft)</Text>
-              <TextInput
-                style={styles.input}
-                value={formData.initial_plaster_area}
-                onChangeText={(text) =>
-                  setFormData({ ...formData, initial_plaster_area: text })
-                }
-                placeholder="0"
-                keyboardType="numeric"
-              />
-
-              <Text style={styles.inputLabel}>Final Plastered Area (sq.ft)</Text>
-              <TextInput
-                style={styles.input}
-                value={formData.final_plastered_area}
-                onChangeText={(text) =>
-                  setFormData({ ...formData, final_plastered_area: text })
-                }
-                placeholder="0"
-                keyboardType="numeric"
-              />
-
-              <Text style={styles.inputLabel}>Bags Used</Text>
-              <TextInput
-                style={styles.input}
-                value={formData.bags_used}
-                onChangeText={(text) => setFormData({ ...formData, bags_used: text })}
-                placeholder="0"
-                keyboardType="numeric"
-              />
-
-              <Text style={styles.inputLabel}>Invoiced Amount (₹) *</Text>
-              <TextInput
-                style={styles.input}
-                value={formData.invoiced_amount}
-                onChangeText={(text) =>
-                  setFormData({ ...formData, invoiced_amount: text })
-                }
-                placeholder="0"
-                keyboardType="numeric"
-              />
-
-              <Text style={styles.inputLabel}>Amount Received (₹)</Text>
-              <TextInput
-                style={styles.input}
-                value={formData.amount_received}
-                onChangeText={(text) =>
-                  setFormData({ ...formData, amount_received: text })
-                }
-                placeholder="0"
-                keyboardType="numeric"
-              />
-
-              <Text style={styles.inputLabel}>Status</Text>
-              <View style={styles.statusButtons}>
-                <TouchableOpacity
-                  style={[
-                    styles.statusButton,
-                    formData.status === 'Pending' && styles.statusButtonActive,
-                  ]}
-                  onPress={() => setFormData({ ...formData, status: 'Pending' })}
-                >
-                  <Text
-                    style={[
-                      styles.statusButtonText,
-                      formData.status === 'Pending' && styles.statusButtonTextActive,
-                    ]}
-                  >
-                    Pending
-                  </Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[
-                    styles.statusButton,
-                    formData.status === 'Completed' && styles.statusButtonActive,
-                  ]}
-                  onPress={() => setFormData({ ...formData, status: 'Completed' })}
-                >
-                  <Text
-                    style={[
-                      styles.statusButtonText,
-                      formData.status === 'Completed' && styles.statusButtonTextActive,
-                    ]}
-                  >
-                    Completed
-                  </Text>
-                </TouchableOpacity>
+            <ScrollView style={{ padding: 16 }}>
+              <Label text="Project Name *" />
+              <TextInput style={s.input} value={formData.name} onChangeText={v => setFormData({ ...formData, name: v })} placeholder="Enter name" />
+              <Label text="Initial Plaster Area (sq.ft)" />
+              <TextInput style={s.input} value={formData.initial_plaster_area} onChangeText={v => setFormData({ ...formData, initial_plaster_area: v })} keyboardType="numeric" placeholder="0" />
+              <Label text="Final Plastered Area (sq.ft)" />
+              <TextInput style={s.input} value={formData.final_plastered_area} onChangeText={v => setFormData({ ...formData, final_plastered_area: v })} keyboardType="numeric" placeholder="0" />
+              <Label text="Invoiced Amount *" />
+              <TextInput style={s.input} value={formData.invoiced_amount} onChangeText={v => setFormData({ ...formData, invoiced_amount: v })} keyboardType="numeric" placeholder="0" />
+              <Label text="Amount Received" />
+              <TextInput style={s.input} value={formData.amount_received} onChangeText={v => setFormData({ ...formData, amount_received: v })} keyboardType="numeric" placeholder="0" />
+              <Label text="Status" />
+              <View style={{ flexDirection: 'row', gap: 12 }}>
+                {['Pending', 'Completed'].map(st => (
+                  <TouchableOpacity key={st} style={[s.chipBtn, formData.status === st && { backgroundColor: T.primary, borderColor: T.primary }]}
+                    onPress={() => setFormData({ ...formData, status: st })}>
+                    <Text style={[{ fontSize: 13, fontWeight: '600', color: T.muted }, formData.status === st && { color: '#FFF' }]}>{st}</Text>
+                  </TouchableOpacity>
+                ))}
               </View>
             </ScrollView>
-
-            <View style={styles.modalActions}>
-              <TouchableOpacity
-                style={[styles.modalButton, styles.cancelButton]}
-                onPress={() => setModalVisible(false)}
-              >
-                <Text style={styles.cancelButtonText}>Cancel</Text>
+            <View style={s.modalActions}>
+              <TouchableOpacity style={[s.modalBtn, { backgroundColor: T.bg }]} onPress={() => setModalVisible(false)}>
+                <Text style={{ fontWeight: '600', color: T.text }}>Cancel</Text>
               </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.modalButton, styles.saveButton]}
-                onPress={handleSave}
-              >
-                <Text style={styles.saveButtonText}>Save</Text>
+              <TouchableOpacity testID="save-project-btn" style={[s.modalBtn, { backgroundColor: T.primary }]} onPress={handleSave}>
+                <Text style={{ fontWeight: '600', color: '#FFF' }}>Save</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Add Bag Usage Modal */}
+      <Modal animationType="slide" transparent visible={bagModalVisible} onRequestClose={() => setBagModalVisible(false)}>
+        <View style={s.modalBg}>
+          <View style={s.modalBox}>
+            <View style={s.modalHeader}>
+              <Text style={{ fontSize: 18, fontWeight: 'bold', color: T.text }}>Add Bag Usage</Text>
+              <TouchableOpacity onPress={() => setBagModalVisible(false)}><Ionicons name="close" size={26} color={T.text} /></TouchableOpacity>
+            </View>
+            <View style={{ padding: 16 }}>
+              <Text style={{ fontSize: 13, color: T.muted, marginBottom: 12 }}>Project: {selectedProjectForBag?.name}</Text>
+              <Label text="Bag Type" />
+              <View style={{ flexDirection: 'row', gap: 12 }}>
+                {['Naturoplast', 'Iraniya'].map(bt => (
+                  <TouchableOpacity key={bt} style={[s.chipBtn, { flex: 1 }, bagForm.bag_type === bt && { backgroundColor: bt === 'Naturoplast' ? T.primary : T.warn, borderColor: bt === 'Naturoplast' ? T.primary : T.warn }]}
+                    onPress={() => setBagForm({ ...bagForm, bag_type: bt })}>
+                    <Text style={[{ fontSize: 13, fontWeight: '600', color: T.muted, textAlign: 'center' }, bagForm.bag_type === bt && { color: '#FFF' }]}>{bt}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+              <Label text="Quantity (bags) *" />
+              <TextInput style={s.input} value={bagForm.quantity} onChangeText={v => setBagForm({ ...bagForm, quantity: v })} keyboardType="numeric" placeholder="0" />
+              <Label text="Date" />
+              <TextInput style={s.input} value={bagForm.date} onChangeText={v => setBagForm({ ...bagForm, date: v })} placeholder="YYYY-MM-DD" />
+            </View>
+            <View style={s.modalActions}>
+              <TouchableOpacity style={[s.modalBtn, { backgroundColor: T.bg }]} onPress={() => setBagModalVisible(false)}>
+                <Text style={{ fontWeight: '600', color: T.text }}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity testID="save-bag-usage-btn" style={[s.modalBtn, { backgroundColor: T.primary }]} onPress={handleAddBagUsage}>
+                <Text style={{ fontWeight: '600', color: '#FFF' }}>Add</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -391,247 +319,30 @@ export default function Projects() {
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: THEME.background,
-  },
-  loadingContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: THEME.background,
-  },
-  scrollView: {
-    flex: 1,
-  },
-  contentContainer: {
-    padding: 16,
-    paddingBottom: 80,
-  },
-  emptyState: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 80,
-  },
-  emptyText: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: THEME.text,
-    marginTop: 16,
-  },
-  emptySubtext: {
-    fontSize: 14,
-    color: THEME.textLight,
-    marginTop: 8,
-  },
-  projectCard: {
-    backgroundColor: THEME.card,
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 16,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
-  },
-  projectHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 12,
-  },
-  projectName: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: THEME.text,
-    flex: 1,
-  },
-  statusBadge: {
-    paddingHorizontal: 12,
-    paddingVertical: 4,
-    borderRadius: 12,
-  },
-  completedBadge: {
-    backgroundColor: '#E8F5E9',
-  },
-  pendingBadge: {
-    backgroundColor: '#FFF3E0',
-  },
-  statusText: {
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  projectDetails: {
-    marginBottom: 12,
-  },
-  detailRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    paddingVertical: 6,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F0F0F0',
-  },
-  pendingRow: {
-    borderBottomWidth: 0,
-    paddingTop: 12,
-    marginTop: 6,
-    borderTopWidth: 2,
-    borderTopColor: THEME.warning,
-  },
-  detailLabel: {
-    fontSize: 14,
-    color: THEME.textLight,
-  },
-  detailValue: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: THEME.text,
-  },
-  pendingAmount: {
-    fontSize: 16,
-    color: THEME.warning,
-  },
-  projectActions: {
-    flexDirection: 'row',
-    gap: 12,
-    marginTop: 12,
-  },
-  actionButton: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 10,
-    borderRadius: 8,
-    backgroundColor: '#E3F2FD',
-    gap: 6,
-  },
-  deleteButton: {
-    backgroundColor: '#FFEBEE',
-  },
-  actionButtonText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: THEME.secondary,
-  },
-  deleteButtonText: {
-    color: THEME.error,
-  },
-  fab: {
-    position: 'absolute',
-    right: 20,
-    bottom: 20,
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: THEME.primary,
-    justifyContent: 'center',
-    alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 8,
-  },
-  modalContainer: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    justifyContent: 'flex-end',
-  },
-  modalContent: {
-    backgroundColor: THEME.card,
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    paddingTop: 20,
-    maxHeight: '90%',
-  },
-  modalHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingBottom: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#E0E0E0',
-  },
-  modalTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: THEME.text,
-  },
-  modalForm: {
-    padding: 20,
-  },
-  inputLabel: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: THEME.text,
-    marginBottom: 8,
-    marginTop: 12,
-  },
-  input: {
-    borderWidth: 1,
-    borderColor: '#E0E0E0',
-    borderRadius: 8,
-    padding: 12,
-    fontSize: 16,
-    color: THEME.text,
-    backgroundColor: THEME.background,
-  },
-  statusButtons: {
-    flexDirection: 'row',
-    gap: 12,
-  },
-  statusButton: {
-    flex: 1,
-    paddingVertical: 12,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#E0E0E0',
-    alignItems: 'center',
-    backgroundColor: THEME.background,
-  },
-  statusButtonActive: {
-    backgroundColor: THEME.primary,
-    borderColor: THEME.primary,
-  },
-  statusButtonText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: THEME.textLight,
-  },
-  statusButtonTextActive: {
-    color: '#FFFFFF',
-  },
-  modalActions: {
-    flexDirection: 'row',
-    gap: 12,
-    padding: 20,
-    borderTopWidth: 1,
-    borderTopColor: '#E0E0E0',
-  },
-  modalButton: {
-    flex: 1,
-    paddingVertical: 14,
-    borderRadius: 8,
-    alignItems: 'center',
-  },
-  cancelButton: {
-    backgroundColor: THEME.background,
-  },
-  saveButton: {
-    backgroundColor: THEME.primary,
-  },
-  cancelButtonText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: THEME.text,
-  },
-  saveButtonText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#FFFFFF',
-  },
+function Label({ text }: { text: string }) {
+  return <Text style={{ fontSize: 13, fontWeight: '600', color: '#212121', marginBottom: 6, marginTop: 12 }}>{text}</Text>;
+}
+
+function Row({ label, value }: { label: string; value: string }) {
+  return (
+    <View style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: '#F0F0F0' }}>
+      <Text style={{ fontSize: 13, color: '#757575' }}>{label}</Text>
+      <Text style={{ fontSize: 13, fontWeight: '600', color: '#212121' }}>{value}</Text>
+    </View>
+  );
+}
+
+const s = StyleSheet.create({
+  container: { flex: 1, backgroundColor: T.bg },
+  center: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: T.bg },
+  card: { backgroundColor: T.card, borderRadius: 12, padding: 16, marginBottom: 12, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.08, shadowRadius: 4, elevation: 3 },
+  actBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 8, borderRadius: 8, gap: 4 },
+  fab: { position: 'absolute', right: 20, bottom: 20, width: 56, height: 56, borderRadius: 28, backgroundColor: T.primary, justifyContent: 'center', alignItems: 'center', elevation: 8 },
+  modalBg: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
+  modalBox: { backgroundColor: T.card, borderTopLeftRadius: 20, borderTopRightRadius: 20, maxHeight: '90%' },
+  modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 16, borderBottomWidth: 1, borderBottomColor: '#E0E0E0' },
+  modalActions: { flexDirection: 'row', gap: 12, padding: 16, borderTopWidth: 1, borderTopColor: '#E0E0E0' },
+  modalBtn: { flex: 1, paddingVertical: 14, borderRadius: 8, alignItems: 'center' },
+  input: { borderWidth: 1, borderColor: '#E0E0E0', borderRadius: 8, padding: 12, fontSize: 15, color: T.text, backgroundColor: T.bg },
+  chipBtn: { flex: 1, paddingVertical: 10, borderRadius: 8, borderWidth: 1, borderColor: '#E0E0E0', alignItems: 'center', backgroundColor: T.bg },
 });
