@@ -5,11 +5,12 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from 'expo-router';
+import { useApi } from '../../src/useApi';
 
-const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL;
 const T = { primary: '#2E7D32', secondary: '#1976D2', bg: '#F5F5F5', card: '#FFF', text: '#212121', muted: '#757575', ok: '#4CAF50', warn: '#FF9800', err: '#F44336' };
 
 export default function Partners() {
+  const { apiFetch } = useApi();
   const [partners, setPartners] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -23,7 +24,7 @@ export default function Partners() {
 
   const fetchPartners = async () => {
     try {
-      const r = await fetch(`${BACKEND_URL}/api/partners`);
+      const r = await apiFetch(`/api/partners`);
       setPartners(await r.json());
     } catch (e) { console.error(e); }
     finally { setLoading(false); setRefreshing(false); }
@@ -45,8 +46,8 @@ export default function Partners() {
     if (!formData.name) { Alert.alert('Error', 'Enter name'); return; }
     try {
       const payload = { name: formData.name, total_investment: parseFloat(formData.total_investment) || 0 };
-      const url = editingPartner ? `${BACKEND_URL}/api/partners/${editingPartner.id}` : `${BACKEND_URL}/api/partners`;
-      const r = await fetch(url, { method: editingPartner ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      const url = editingPartner ? `/api/partners/${editingPartner.id}` : `/api/partners`;
+      const r = await apiFetch(url, { method: editingPartner ? 'PUT' : 'POST', body: JSON.stringify(payload) });
       if (r.ok) { setModalVisible(false); fetchPartners(); }
     } catch (e) { Alert.alert('Error', 'Failed'); }
   };
@@ -55,7 +56,7 @@ export default function Partners() {
     Alert.alert('Delete Partner', `Delete "${p.name}"?`, [
       { text: 'Cancel', style: 'cancel' },
       { text: 'Delete', style: 'destructive', onPress: async () => {
-        await fetch(`${BACKEND_URL}/api/partners/${p.id}`, { method: 'DELETE' });
+        await apiFetch(`/api/partners/${p.id}`, { method: 'DELETE' });
         fetchPartners();
       }},
     ]);
@@ -76,8 +77,8 @@ export default function Partners() {
         type: txnData.type,
         date: txnData.date,
       };
-      const r = await fetch(`${BACKEND_URL}/api/partners/transaction`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+      const r = await apiFetch(`/api/partners/transaction`, {
+        method: 'POST', body: JSON.stringify(payload),
       });
       if (r.ok) { setTxnModalVisible(false); fetchPartners(); Alert.alert('Success', `${txnData.type} of ${fmt(parseFloat(txnData.amount))} recorded. Bank balance updated.`); }
     } catch (e) { Alert.alert('Error', 'Failed'); }

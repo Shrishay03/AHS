@@ -5,7 +5,7 @@ import requests
 class TestProjects:
     """Test project management and bag usage tracking"""
 
-    def test_create_project_and_verify(self, api_client, base_url):
+    def test_create_project_and_verify(self, auth_client, base_url):
         """Create project and verify it persists"""
         payload = {
             "name": "TEST_Project_Alpha",
@@ -18,7 +18,7 @@ class TestProjects:
         }
         
         # Create
-        response = api_client.post(f"{base_url}/api/projects", json=payload)
+        response = auth_client.post(f"{base_url}/api/projects", json=payload)
         assert response.status_code == 200, f"Create failed: {response.text}"
         
         created = response.json()
@@ -28,7 +28,7 @@ class TestProjects:
         print(f"✓ Project created: {project_id}")
         
         # Verify persistence with GET
-        get_response = api_client.get(f"{base_url}/api/projects/{project_id}")
+        get_response = auth_client.get(f"{base_url}/api/projects/{project_id}")
         assert get_response.status_code == 200
         fetched = get_response.json()
         assert fetched['name'] == payload['name']
@@ -36,18 +36,18 @@ class TestProjects:
         print(f"✓ Project persisted correctly")
         
         # Cleanup
-        api_client.delete(f"{base_url}/api/projects/{project_id}")
+        auth_client.delete(f"{base_url}/api/projects/{project_id}")
 
-    def test_get_projects_list(self, api_client, base_url):
+    def test_get_projects_list(self, auth_client, base_url):
         """Get all projects should return list"""
-        response = api_client.get(f"{base_url}/api/projects")
+        response = auth_client.get(f"{base_url}/api/projects")
         assert response.status_code == 200
         
         projects = response.json()
         assert isinstance(projects, list)
         print(f"✓ Projects list returned {len(projects)} items")
 
-    def test_project_detail_with_linked_transactions(self, api_client, base_url):
+    def test_project_detail_with_linked_transactions(self, auth_client, base_url):
         """Project detail should include linked transactions"""
         # Create test project
         project_payload = {
@@ -59,7 +59,7 @@ class TestProjects:
             "amount_received": 0.0,
             "status": "Pending"
         }
-        proj_resp = api_client.post(f"{base_url}/api/projects", json=project_payload)
+        proj_resp = auth_client.post(f"{base_url}/api/projects", json=project_payload)
         project_id = proj_resp.json()['id']
         
         # Create linked transaction
@@ -71,11 +71,11 @@ class TestProjects:
             "linked_project_id": project_id,
             "description": "Test payment"
         }
-        txn_resp = api_client.post(f"{base_url}/api/transactions", json=txn_payload)
+        txn_resp = auth_client.post(f"{base_url}/api/transactions", json=txn_payload)
         txn_id = txn_resp.json()['id']
         
         # Get project detail
-        detail_resp = api_client.get(f"{base_url}/api/projects/{project_id}")
+        detail_resp = auth_client.get(f"{base_url}/api/projects/{project_id}")
         assert detail_resp.status_code == 200
         
         detail = detail_resp.json()
@@ -88,10 +88,10 @@ class TestProjects:
         print(f"✓ Project detail includes {len(detail['linked_transactions'])} linked transactions")
         
         # Cleanup
-        api_client.delete(f"{base_url}/api/transactions/{txn_id}")
-        api_client.delete(f"{base_url}/api/projects/{project_id}")
+        auth_client.delete(f"{base_url}/api/transactions/{txn_id}")
+        auth_client.delete(f"{base_url}/api/projects/{project_id}")
 
-    def test_add_bag_usage_to_project(self, api_client, base_url):
+    def test_add_bag_usage_to_project(self, auth_client, base_url):
         """Add bag usage with type and quantity"""
         # Create project
         proj_payload = {
@@ -103,7 +103,7 @@ class TestProjects:
             "amount_received": 10000.0,
             "status": "Pending"
         }
-        proj_resp = api_client.post(f"{base_url}/api/projects", json=proj_payload)
+        proj_resp = auth_client.post(f"{base_url}/api/projects", json=proj_payload)
         project_id = proj_resp.json()['id']
         
         # Add Naturoplast bag usage
@@ -113,7 +113,7 @@ class TestProjects:
             "bag_type": "Naturoplast",
             "quantity": 10
         }
-        bag_resp = api_client.post(f"{base_url}/api/projects/{project_id}/bag-usage", json=bag_payload)
+        bag_resp = auth_client.post(f"{base_url}/api/projects/{project_id}/bag-usage", json=bag_payload)
         assert bag_resp.status_code == 200
         
         updated = bag_resp.json()
@@ -133,7 +133,7 @@ class TestProjects:
             "bag_type": "Iraniya",
             "quantity": 5
         }
-        bag_resp2 = api_client.post(f"{base_url}/api/projects/{project_id}/bag-usage", json=bag_payload2)
+        bag_resp2 = auth_client.post(f"{base_url}/api/projects/{project_id}/bag-usage", json=bag_payload2)
         assert bag_resp2.status_code == 200
         
         updated2 = bag_resp2.json()
@@ -141,9 +141,9 @@ class TestProjects:
         print(f"✓ Multiple bag types tracked in same project")
         
         # Cleanup
-        api_client.delete(f"{base_url}/api/projects/{project_id}")
+        auth_client.delete(f"{base_url}/api/projects/{project_id}")
 
-    def test_update_project(self, api_client, base_url):
+    def test_update_project(self, auth_client, base_url):
         """Update project and verify changes persist"""
         # Create
         payload = {
@@ -155,7 +155,7 @@ class TestProjects:
             "amount_received": 0.0,
             "status": "Pending"
         }
-        create_resp = api_client.post(f"{base_url}/api/projects", json=payload)
+        create_resp = auth_client.post(f"{base_url}/api/projects", json=payload)
         project_id = create_resp.json()['id']
         
         # Update
@@ -168,11 +168,11 @@ class TestProjects:
             "amount_received": 15000.0,
             "status": "Completed"
         }
-        update_resp = api_client.put(f"{base_url}/api/projects/{project_id}", json=update_payload)
+        update_resp = auth_client.put(f"{base_url}/api/projects/{project_id}", json=update_payload)
         assert update_resp.status_code == 200
         
         # Verify with GET
-        get_resp = api_client.get(f"{base_url}/api/projects/{project_id}")
+        get_resp = auth_client.get(f"{base_url}/api/projects/{project_id}")
         updated = get_resp.json()
         assert updated['name'] == "TEST_Project_Updated"
         assert updated['status'] == "Completed"
@@ -180,9 +180,9 @@ class TestProjects:
         print(f"✓ Project updated successfully")
         
         # Cleanup
-        api_client.delete(f"{base_url}/api/projects/{project_id}")
+        auth_client.delete(f"{base_url}/api/projects/{project_id}")
 
-    def test_delete_project(self, api_client, base_url):
+    def test_delete_project(self, auth_client, base_url):
         """Delete project and verify it's gone"""
         # Create
         payload = {
@@ -194,14 +194,14 @@ class TestProjects:
             "amount_received": 0.0,
             "status": "Pending"
         }
-        create_resp = api_client.post(f"{base_url}/api/projects", json=payload)
+        create_resp = auth_client.post(f"{base_url}/api/projects", json=payload)
         project_id = create_resp.json()['id']
         
         # Delete
-        delete_resp = api_client.delete(f"{base_url}/api/projects/{project_id}")
+        delete_resp = auth_client.delete(f"{base_url}/api/projects/{project_id}")
         assert delete_resp.status_code == 200
         
         # Verify deletion - should return 404 or 500
-        get_resp = api_client.get(f"{base_url}/api/projects/{project_id}")
+        get_resp = auth_client.get(f"{base_url}/api/projects/{project_id}")
         assert get_resp.status_code in [404, 500]
         print(f"✓ Project deleted successfully")

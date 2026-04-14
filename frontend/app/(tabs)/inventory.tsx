@@ -5,11 +5,12 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from 'expo-router';
+import { useApi } from '../../src/useApi';
 
-const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL;
 const T = { primary: '#2E7D32', secondary: '#1976D2', bg: '#F5F5F5', card: '#FFF', text: '#212121', muted: '#757575', ok: '#4CAF50', warn: '#FF9800', err: '#F44336' };
 
 export default function Inventory() {
+  const { apiFetch } = useApi();
   const [inventory, setInventory] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -18,7 +19,7 @@ export default function Inventory() {
 
   const fetchInventory = async () => {
     try {
-      const r = await fetch(`${BACKEND_URL}/api/inventory`);
+      const r = await apiFetch(`/api/inventory`);
       setInventory(await r.json());
     } catch (e) { console.error(e); }
     finally { setLoading(false); setRefreshing(false); }
@@ -33,8 +34,8 @@ export default function Inventory() {
         bags: parseInt(formData.bags), bag_type: formData.bag_type,
         amount: parseFloat(formData.amount), date: formData.date, mode: formData.mode,
       };
-      const r = await fetch(`${BACKEND_URL}/api/inventory/purchase`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+      const r = await apiFetch(`/api/inventory/purchase`, {
+        method: 'POST', body: JSON.stringify(payload),
       });
       if (r.ok) { setModalVisible(false); setFormData({ bags: '', amount: '', bag_type: 'Naturoplast', date: new Date().toISOString().slice(0, 10), mode: 'Bank' }); fetchInventory(); Alert.alert('Success', 'Purchase added'); }
     } catch (e) { Alert.alert('Error', 'Failed'); }

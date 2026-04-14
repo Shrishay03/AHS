@@ -1,25 +1,29 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
-  RefreshControl, ActivityIndicator,
+  RefreshControl, ActivityIndicator, Alert, Linking,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from 'expo-router';
+import { useAuth } from '../../src/AuthContext';
+import { useApi } from '../../src/useApi';
 
-const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL;
 const T = { primary: '#2E7D32', secondary: '#1976D2', bg: '#F5F5F5', card: '#FFF', text: '#212121', muted: '#757575', ok: '#4CAF50', warn: '#FF9800', err: '#F44336' };
 
 export default function Dashboard() {
+  const { logout } = useAuth();
+  const { apiFetch } = useApi();
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [d, setD] = useState<any>(null);
   const [showReports, setShowReports] = useState(false);
   const [showBank, setShowBank] = useState(false);
+  const [backingUp, setBackingUp] = useState(false);
 
   const fetchDashboard = async () => {
     try {
-      const r = await fetch(`${BACKEND_URL}/api/dashboard`);
-      setD(await r.json());
+      const r = await apiFetch('/api/dashboard');
+      if (r.ok) setD(await r.json());
     } catch (e) { console.error(e); }
     finally { setLoading(false); setRefreshing(false); }
   };
@@ -169,6 +173,68 @@ export default function Dashboard() {
           {(!d?.bank_transactions || d.bank_transactions.length === 0) && <Text style={{ fontSize: 13, color: T.muted }}>No bank transactions yet</Text>}
         </View>
       )}
+
+      {/* Google Drive & Settings Section */}
+      <View style={[s.card, { marginBottom: 4 }]}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+          <Ionicons name="cloud" size={22} color={T.primary} />
+          <Text style={{ fontSize: 16, fontWeight: '600', color: T.text }}>Google Drive Backup</Text>
+        </View>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+          <Ionicons name={d?.drive_connected ? 'checkmark-circle' : 'close-circle'} size={18} color={d?.drive_connected ? T.ok : T.err} />
+          <Text style={{ fontSize: 13, color: T.muted }}>{d?.drive_connected ? 'Connected' : 'Not connected'}</Text>
+        </View>
+        {d?.last_backup && (
+          <Text style={{ fontSize: 11, color: T.muted, marginBottom: 8 }}>Last backup: {d.last_backup.folder || 'N/A'}</Text>
+        )}
+        <View style={{ flexDirection: 'row', gap: 8 }}>
+          {!d?.drive_connected ? (
+            <TouchableOpacity testID="connect-drive-btn" style={{ flex: 1, backgroundColor: '#E8F5E9', paddingVertical: 10, borderRadius: 8, alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: 6 }}
+              onPress={async () => {
+                try {
+                  const r = await apiFetch('/api/drive/connect');
+                  const data = await r.json();
+                  if (data.authorization_url) Linking.openURL(data.authorization_url);
+                } catch (e) { Alert.alert('Error', 'Failed to connect'); }
+              }}>
+              <Ionicons name="logo-google" size={16} color={T.primary} />
+              <Text style={{ fontSize: 13, fontWeight: '600', color: T.primary }}>Connect Drive</Text>
+            </TouchableOpacity>
+          ) : (
+            <>
+              <TouchableOpacity testID="backup-now-btn" style={{ flex: 1, backgroundColor: '#E8F5E9', paddingVertical: 10, borderRadius: 8, alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: 6 }}
+                onPress={async () => {
+                  setBackingUp(true);
+                  try {
+                    const r = await apiFetch('/api/drive/backup', { method: 'POST' });
+                    const data = await r.json();
+                    Alert.alert('Backup Complete', data.message || 'Backup successful');
+                    fetchDashboard();
+                  } catch (e) { Alert.alert('Error', 'Backup failed'); }
+                  finally { setBackingUp(false); }
+                }} disabled={backingUp}>
+                {backingUp ? <ActivityIndicator size="small" color={T.primary} /> : <Ionicons name="cloud-upload" size={16} color={T.primary} />}
+                <Text style={{ fontSize: 13, fontWeight: '600', color: T.primary }}>{backingUp ? 'Backing up...' : 'Backup Now'}</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={{ paddingHorizontal: 12, paddingVertical: 10, borderRadius: 8, backgroundColor: '#FFEBEE' }}
+                onPress={async () => {
+                  await apiFetch('/api/drive/disconnect');
+                  fetchDashboard();
+                }}>
+                <Ionicons name="unlink" size={16} color={T.err} />
+              </TouchableOpacity>
+            </>
+          )}
+        </View>
+        <Text style={{ fontSize: 10, color: T.muted, marginTop: 8 }}>Auto-backup runs every 24 hours when connected</Text>
+      </View>
+
+      {/* Logout */}
+      <TouchableOpacity testID="logout-btn" style={{ marginTop: 16, paddingVertical: 14, borderRadius: 8, alignItems: 'center', backgroundColor: '#FFEBEE', flexDirection: 'row', justifyContent: 'center', gap: 8 }}
+        onPress={() => { Alert.alert('Logout', 'Are you sure?', [{ text: 'Cancel' }, { text: 'Logout', onPress: logout }]); }}>
+        <Ionicons name="log-out-outline" size={18} color={T.err} />
+        <Text style={{ fontSize: 14, fontWeight: '600', color: T.err }}>Sign Out</Text>
+      </TouchableOpacity>
 
       <View style={{ height: 30 }} />
     </ScrollView>

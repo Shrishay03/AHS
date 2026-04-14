@@ -5,12 +5,13 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from 'expo-router';
+import { useApi } from '../../src/useApi';
 
-const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL;
 const T = { primary: '#2E7D32', secondary: '#1976D2', bg: '#F5F5F5', card: '#FFF', text: '#212121', muted: '#757575', ok: '#4CAF50', warn: '#FF9800', err: '#F44336' };
 const CATEGORIES = ['Bags', 'Labor', 'Transport', 'Materials', 'Rent', 'Electricity', 'Food', 'Misc'];
 
 export default function Transactions() {
+  const { apiFetch } = useApi();
   const [transactions, setTransactions] = useState<any[]>([]);
   const [projects, setProjects] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -26,8 +27,8 @@ export default function Transactions() {
   const fetchData = async () => {
     try {
       const [tRes, pRes] = await Promise.all([
-        fetch(`${BACKEND_URL}/api/transactions`),
-        fetch(`${BACKEND_URL}/api/projects`),
+        apiFetch(`/api/transactions`),
+        apiFetch(`/api/projects`),
       ]);
       setTransactions(await tRes.json());
       setProjects(await pRes.json());
@@ -66,8 +67,8 @@ export default function Transactions() {
         category: formData.type === 'Expense' ? formData.category : null,
         description: formData.description,
       };
-      const url = editingTxn ? `${BACKEND_URL}/api/transactions/${editingTxn.id}` : `${BACKEND_URL}/api/transactions`;
-      const r = await fetch(url, { method: editingTxn ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      const url = editingTxn ? `/api/transactions/${editingTxn.id}` : `/api/transactions`;
+      const r = await apiFetch(url, { method: editingTxn ? 'PUT' : 'POST', body: JSON.stringify(payload) });
       if (r.ok) { setModalVisible(false); fetchData(); }
     } catch (e) { Alert.alert('Error', 'Failed to save'); }
   };
@@ -76,7 +77,7 @@ export default function Transactions() {
     Alert.alert('Delete Transaction', 'Are you sure?', [
       { text: 'Cancel', style: 'cancel' },
       { text: 'Delete', style: 'destructive', onPress: async () => {
-        await fetch(`${BACKEND_URL}/api/transactions/${t.id}`, { method: 'DELETE' });
+        await apiFetch(`/api/transactions/${t.id}`, { method: 'DELETE' });
         fetchData();
       }},
     ]);
@@ -84,7 +85,7 @@ export default function Transactions() {
 
   const handleExport = async () => {
     try {
-      await fetch(`${BACKEND_URL}/api/export/transactions?format=csv`);
+      await apiFetch(`/api/export/transactions?format=csv`);
       Alert.alert('Export', 'Transactions exported successfully as CSV');
     } catch (e) { Alert.alert('Error', 'Export failed'); }
   };

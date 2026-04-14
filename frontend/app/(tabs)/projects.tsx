@@ -5,11 +5,12 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from 'expo-router';
+import { useApi } from '../../src/useApi';
 
-const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL;
 const T = { primary: '#2E7D32', secondary: '#1976D2', bg: '#F5F5F5', card: '#FFF', text: '#212121', muted: '#757575', ok: '#4CAF50', warn: '#FF9800', err: '#F44336' };
 
 export default function Projects() {
+  const { apiFetch } = useApi();
   const [projects, setProjects] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -27,7 +28,7 @@ export default function Projects() {
 
   const fetchProjects = async () => {
     try {
-      const r = await fetch(`${BACKEND_URL}/api/projects`);
+      const r = await apiFetch('/api/projects');
       setProjects(await r.json());
     } catch (e) { console.error(e); }
     finally { setLoading(false); setRefreshing(false); }
@@ -35,7 +36,7 @@ export default function Projects() {
 
   const fetchDetail = async (id: string) => {
     try {
-      const r = await fetch(`${BACKEND_URL}/api/projects/${id}`);
+      const r = await apiFetch(`/api/projects/${id}`);
       setDetailData(await r.json());
     } catch (e) { console.error(e); }
   };
@@ -73,8 +74,8 @@ export default function Projects() {
         amount_received: parseFloat(formData.amount_received) || 0,
         status: formData.status,
       };
-      const url = editingProject ? `${BACKEND_URL}/api/projects/${editingProject.id}` : `${BACKEND_URL}/api/projects`;
-      const r = await fetch(url, { method: editingProject ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      const url = editingProject ? `/api/projects/${editingProject.id}` : `/api/projects`;
+      const r = await apiFetch(url, { method: editingProject ? 'PUT' : 'POST', body: JSON.stringify(payload) });
       if (r.ok) { setModalVisible(false); fetchProjects(); }
     } catch (e) { Alert.alert('Error', 'Failed to save'); }
   };
@@ -83,7 +84,7 @@ export default function Projects() {
     Alert.alert('Delete Project', `Delete "${p.name}"?`, [
       { text: 'Cancel', style: 'cancel' },
       { text: 'Delete', style: 'destructive', onPress: async () => {
-        await fetch(`${BACKEND_URL}/api/projects/${p.id}`, { method: 'DELETE' });
+        await apiFetch(`/api/projects/${p.id}`, { method: 'DELETE' });
         fetchProjects();
       }},
     ]);
@@ -103,8 +104,8 @@ export default function Projects() {
         date: bagForm.date, bag_type: bagForm.bag_type,
         quantity: parseInt(bagForm.quantity),
       };
-      const r = await fetch(`${BACKEND_URL}/api/projects/${selectedProjectForBag.id}/bag-usage`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+      const r = await apiFetch(`/api/projects/${selectedProjectForBag.id}/bag-usage`, {
+        method: 'POST', body: JSON.stringify(payload),
       });
       if (r.ok) { setBagModalVisible(false); fetchProjects(); Alert.alert('Success', 'Bag usage added'); }
     } catch (e) { Alert.alert('Error', 'Failed to add'); }

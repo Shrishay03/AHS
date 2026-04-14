@@ -5,7 +5,7 @@ import requests
 class TestPartners:
     """Test partner management and investment/withdrawal tracking"""
 
-    def test_create_partner_and_verify(self, api_client, base_url):
+    def test_create_partner_and_verify(self, auth_client, base_url):
         """Create partner and verify persistence"""
         payload = {
             "name": "TEST_Partner_Alpha",
@@ -13,7 +13,7 @@ class TestPartners:
         }
         
         # Create
-        response = api_client.post(f"{base_url}/api/partners", json=payload)
+        response = auth_client.post(f"{base_url}/api/partners", json=payload)
         assert response.status_code == 200, f"Create failed: {response.text}"
         
         created = response.json()
@@ -25,11 +25,11 @@ class TestPartners:
         print(f"✓ Partner created: {partner_id}")
         
         # Cleanup
-        api_client.delete(f"{base_url}/api/partners/{partner_id}")
+        auth_client.delete(f"{base_url}/api/partners/{partner_id}")
 
-    def test_get_partners_with_transaction_history(self, api_client, base_url):
+    def test_get_partners_with_transaction_history(self, auth_client, base_url):
         """Get partners should include transaction history"""
-        response = api_client.get(f"{base_url}/api/partners")
+        response = auth_client.get(f"{base_url}/api/partners")
         assert response.status_code == 200
         
         partners = response.json()
@@ -42,18 +42,18 @@ class TestPartners:
         
         print(f"✓ Partners list has {len(partners)} partners with transaction history")
 
-    def test_partner_investment_affects_bank_balance(self, api_client, base_url):
+    def test_partner_investment_affects_bank_balance(self, auth_client, base_url):
         """Partner investment should increase bank balance"""
         # Create partner
         partner_payload = {
             "name": "TEST_Partner_Investment",
             "total_investment": 0.0
         }
-        partner_resp = api_client.post(f"{base_url}/api/partners", json=partner_payload)
+        partner_resp = auth_client.post(f"{base_url}/api/partners", json=partner_payload)
         partner_id = partner_resp.json()['id']
         
         # Get initial bank balance
-        dash1 = api_client.get(f"{base_url}/api/dashboard").json()
+        dash1 = auth_client.get(f"{base_url}/api/dashboard").json()
         initial_bank = dash1['bank_balance']
         
         # Add investment
@@ -63,37 +63,37 @@ class TestPartners:
             "type": "Investment",
             "date": "2025-01-29"
         }
-        txn_resp = api_client.post(f"{base_url}/api/partners/transaction", json=txn_payload)
+        txn_resp = auth_client.post(f"{base_url}/api/partners/transaction", json=txn_payload)
         assert txn_resp.status_code == 200
         print(f"✓ Investment transaction created")
         
         # Verify bank balance increased
-        dash2 = api_client.get(f"{base_url}/api/dashboard").json()
+        dash2 = auth_client.get(f"{base_url}/api/dashboard").json()
         assert dash2['bank_balance'] == initial_bank + 25000.0, \
             f"Bank balance not updated: {dash2['bank_balance']} != {initial_bank + 25000.0}"
         print(f"✓ Bank balance increased by investment: {initial_bank} -> {dash2['bank_balance']}")
         
         # Verify partner balance updated
-        partners = api_client.get(f"{base_url}/api/partners").json()
+        partners = auth_client.get(f"{base_url}/api/partners").json()
         partner = next(p for p in partners if p['id'] == partner_id)
         assert partner['total_investment'] == 25000.0
         assert partner['current_balance'] == 25000.0
         
         # Cleanup
-        api_client.delete(f"{base_url}/api/partners/{partner_id}")
+        auth_client.delete(f"{base_url}/api/partners/{partner_id}")
 
-    def test_partner_withdrawal_affects_bank_balance(self, api_client, base_url):
+    def test_partner_withdrawal_affects_bank_balance(self, auth_client, base_url):
         """Partner withdrawal should decrease bank balance"""
         # Create partner with investment
         partner_payload = {
             "name": "TEST_Partner_Withdrawal",
             "total_investment": 30000.0
         }
-        partner_resp = api_client.post(f"{base_url}/api/partners", json=partner_payload)
+        partner_resp = auth_client.post(f"{base_url}/api/partners", json=partner_payload)
         partner_id = partner_resp.json()['id']
         
         # Get initial bank balance
-        dash1 = api_client.get(f"{base_url}/api/dashboard").json()
+        dash1 = auth_client.get(f"{base_url}/api/dashboard").json()
         initial_bank = dash1['bank_balance']
         
         # Add withdrawal
@@ -103,38 +103,38 @@ class TestPartners:
             "type": "Withdrawal",
             "date": "2025-01-30"
         }
-        txn_resp = api_client.post(f"{base_url}/api/partners/transaction", json=txn_payload)
+        txn_resp = auth_client.post(f"{base_url}/api/partners/transaction", json=txn_payload)
         assert txn_resp.status_code == 200
         print(f"✓ Withdrawal transaction created")
         
         # Verify bank balance decreased
-        dash2 = api_client.get(f"{base_url}/api/dashboard").json()
+        dash2 = auth_client.get(f"{base_url}/api/dashboard").json()
         assert dash2['bank_balance'] == initial_bank - 10000.0, \
             f"Bank balance not updated: {dash2['bank_balance']} != {initial_bank - 10000.0}"
         print(f"✓ Bank balance decreased by withdrawal: {initial_bank} -> {dash2['bank_balance']}")
         
         # Verify partner balance updated
-        partners = api_client.get(f"{base_url}/api/partners").json()
+        partners = auth_client.get(f"{base_url}/api/partners").json()
         partner = next(p for p in partners if p['id'] == partner_id)
         assert partner['total_withdrawals'] == 10000.0
         assert partner['current_balance'] == 20000.0  # 30000 - 10000
         
         # Cleanup
-        api_client.delete(f"{base_url}/api/partners/{partner_id}")
+        auth_client.delete(f"{base_url}/api/partners/{partner_id}")
 
-    def test_partner_transaction_creates_bank_transaction(self, api_client, base_url):
+    def test_partner_transaction_creates_bank_transaction(self, auth_client, base_url):
         """Partner investment/withdrawal should create bank transaction entry"""
         # Create partner
         partner_payload = {
             "name": "TEST_Partner_BankTxn",
             "total_investment": 0.0
         }
-        partner_resp = api_client.post(f"{base_url}/api/partners", json=partner_payload)
+        partner_resp = auth_client.post(f"{base_url}/api/partners", json=partner_payload)
         partner_id = partner_resp.json()['id']
         partner_name = partner_resp.json()['name']
         
         # Get initial transaction count
-        txns1 = api_client.get(f"{base_url}/api/transactions").json()
+        txns1 = auth_client.get(f"{base_url}/api/transactions").json()
         initial_count = len(txns1)
         
         # Add investment
@@ -144,10 +144,10 @@ class TestPartners:
             "type": "Investment",
             "date": "2025-01-31"
         }
-        api_client.post(f"{base_url}/api/partners/transaction", json=txn_payload)
+        auth_client.post(f"{base_url}/api/partners/transaction", json=txn_payload)
         
         # Verify bank transaction created
-        txns2 = api_client.get(f"{base_url}/api/transactions").json()
+        txns2 = auth_client.get(f"{base_url}/api/transactions").json()
         assert len(txns2) > initial_count
         
         # Find the created transaction
@@ -161,16 +161,16 @@ class TestPartners:
         print(f"✓ Partner investment created bank transaction: {latest['description']}")
         
         # Cleanup
-        api_client.delete(f"{base_url}/api/partners/{partner_id}")
+        auth_client.delete(f"{base_url}/api/partners/{partner_id}")
 
-    def test_update_partner(self, api_client, base_url):
+    def test_update_partner(self, auth_client, base_url):
         """Update partner and verify changes"""
         # Create
         payload = {
             "name": "TEST_Partner_Update",
             "total_investment": 20000.0
         }
-        create_resp = api_client.post(f"{base_url}/api/partners", json=payload)
+        create_resp = auth_client.post(f"{base_url}/api/partners", json=payload)
         partner_id = create_resp.json()['id']
         
         # Update
@@ -178,7 +178,7 @@ class TestPartners:
             "name": "TEST_Partner_Updated",
             "total_investment": 25000.0
         }
-        update_resp = api_client.put(f"{base_url}/api/partners/{partner_id}", json=update_payload)
+        update_resp = auth_client.put(f"{base_url}/api/partners/{partner_id}", json=update_payload)
         assert update_resp.status_code == 200
         
         updated = update_resp.json()
@@ -187,24 +187,24 @@ class TestPartners:
         print(f"✓ Partner updated successfully")
         
         # Cleanup
-        api_client.delete(f"{base_url}/api/partners/{partner_id}")
+        auth_client.delete(f"{base_url}/api/partners/{partner_id}")
 
-    def test_delete_partner(self, api_client, base_url):
+    def test_delete_partner(self, auth_client, base_url):
         """Delete partner and verify removal"""
         # Create
         payload = {
             "name": "TEST_Partner_Delete",
             "total_investment": 10000.0
         }
-        create_resp = api_client.post(f"{base_url}/api/partners", json=payload)
+        create_resp = auth_client.post(f"{base_url}/api/partners", json=payload)
         partner_id = create_resp.json()['id']
         
         # Delete
-        delete_resp = api_client.delete(f"{base_url}/api/partners/{partner_id}")
+        delete_resp = auth_client.delete(f"{base_url}/api/partners/{partner_id}")
         assert delete_resp.status_code == 200
         
         # Verify deletion
-        partners = api_client.get(f"{base_url}/api/partners").json()
+        partners = auth_client.get(f"{base_url}/api/partners").json()
         partner_ids = [p['id'] for p in partners]
         assert partner_id not in partner_ids
         print(f"✓ Partner deleted successfully")

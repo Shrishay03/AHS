@@ -5,9 +5,9 @@ import requests
 class TestInventory:
     """Test inventory management with separate bag type tracking"""
 
-    def test_get_inventory(self, api_client, base_url):
+    def test_get_inventory(self, auth_client, base_url):
         """Get inventory should return stock breakdown by bag type"""
-        response = api_client.get(f"{base_url}/api/inventory")
+        response = auth_client.get(f"{base_url}/api/inventory")
         assert response.status_code == 200
         
         data = response.json()
@@ -22,9 +22,9 @@ class TestInventory:
             assert field in data, f"Missing field: {field}"
         print(f"✓ Inventory has all required fields")
 
-    def test_inventory_stock_calculation(self, api_client, base_url):
+    def test_inventory_stock_calculation(self, auth_client, base_url):
         """Stock should equal purchased - used for each bag type"""
-        response = api_client.get(f"{base_url}/api/inventory")
+        response = auth_client.get(f"{base_url}/api/inventory")
         data = response.json()
         
         # Naturoplast
@@ -42,12 +42,12 @@ class TestInventory:
         assert data['current_stock'] == expected_total
         print(f"✓ Stock calculations correct: NP={expected_np_stock}, IR={expected_ir_stock}")
 
-    def test_add_inventory_purchase_naturoplast(self, api_client, base_url):
+    def test_add_inventory_purchase_naturoplast(self, auth_client, base_url):
         """Add Naturoplast purchase and verify stock increase"""
         # Get initial stock
-        inv1 = api_client.get(f"{base_url}/api/inventory").json()
+        inv1 = auth_client.get(f"{base_url}/api/inventory").json()
         initial_np = inv1['naturoplast_purchased']
-        initial_bank = api_client.get(f"{base_url}/api/dashboard").json()['bank_balance']
+        initial_bank = auth_client.get(f"{base_url}/api/dashboard").json()['bank_balance']
         
         # Add purchase
         payload = {
@@ -57,23 +57,23 @@ class TestInventory:
             "date": "2025-01-26",
             "mode": "Bank"
         }
-        resp = api_client.post(f"{base_url}/api/inventory/purchase", json=payload)
+        resp = auth_client.post(f"{base_url}/api/inventory/purchase", json=payload)
         assert resp.status_code == 200
         print(f"✓ Naturoplast purchase added")
         
         # Verify stock increased
-        inv2 = api_client.get(f"{base_url}/api/inventory").json()
+        inv2 = auth_client.get(f"{base_url}/api/inventory").json()
         assert inv2['naturoplast_purchased'] == initial_np + 20
         
         # Verify bank balance decreased (expense)
-        dash2 = api_client.get(f"{base_url}/api/dashboard").json()
+        dash2 = auth_client.get(f"{base_url}/api/dashboard").json()
         assert dash2['bank_balance'] == initial_bank - 4000.0
         print(f"✓ Stock and balance updated correctly")
 
-    def test_add_inventory_purchase_iraniya(self, api_client, base_url):
+    def test_add_inventory_purchase_iraniya(self, auth_client, base_url):
         """Add Iraniya purchase and verify stock increase"""
         # Get initial stock
-        inv1 = api_client.get(f"{base_url}/api/inventory").json()
+        inv1 = auth_client.get(f"{base_url}/api/inventory").json()
         initial_ir = inv1['iraniya_purchased']
         
         # Add purchase
@@ -84,19 +84,19 @@ class TestInventory:
             "date": "2025-01-27",
             "mode": "Petty Cash"
         }
-        resp = api_client.post(f"{base_url}/api/inventory/purchase", json=payload)
+        resp = auth_client.post(f"{base_url}/api/inventory/purchase", json=payload)
         assert resp.status_code == 200
         print(f"✓ Iraniya purchase added")
         
         # Verify stock increased
-        inv2 = api_client.get(f"{base_url}/api/inventory").json()
+        inv2 = auth_client.get(f"{base_url}/api/inventory").json()
         assert inv2['iraniya_purchased'] == initial_ir + 15
         print(f"✓ Iraniya stock updated")
 
-    def test_inventory_purchase_creates_transaction(self, api_client, base_url):
+    def test_inventory_purchase_creates_transaction(self, auth_client, base_url):
         """Inventory purchase should create expense transaction"""
         # Get initial transaction count
-        txns1 = api_client.get(f"{base_url}/api/transactions").json()
+        txns1 = auth_client.get(f"{base_url}/api/transactions").json()
         initial_count = len(txns1)
         
         # Add purchase
@@ -107,10 +107,10 @@ class TestInventory:
             "date": "2025-01-28",
             "mode": "Bank"
         }
-        api_client.post(f"{base_url}/api/inventory/purchase", json=payload)
+        auth_client.post(f"{base_url}/api/inventory/purchase", json=payload)
         
         # Verify transaction created
-        txns2 = api_client.get(f"{base_url}/api/transactions").json()
+        txns2 = auth_client.get(f"{base_url}/api/transactions").json()
         assert len(txns2) > initial_count
         
         # Find the created transaction
@@ -123,9 +123,9 @@ class TestInventory:
         assert 'Naturoplast' in latest['description']
         print(f"✓ Purchase created expense transaction: {latest['description']}")
 
-    def test_inventory_purchase_history(self, api_client, base_url):
+    def test_inventory_purchase_history(self, auth_client, base_url):
         """Purchase history should track all purchases"""
-        inv = api_client.get(f"{base_url}/api/inventory").json()
+        inv = auth_client.get(f"{base_url}/api/inventory").json()
         history = inv['purchase_history']
         
         assert isinstance(history, list)
