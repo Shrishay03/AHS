@@ -486,9 +486,7 @@ async def partner_transaction(transaction: PartnerTransaction):
                 {"$inc": {"total_investment": transaction.amount, "current_balance": transaction.amount},
                  "$set": {"updated_at": datetime.now(timezone.utc)}}
             )
-            # Investment adds to bank
-            await update_balance_field("bank_balance", transaction.amount)
-            # Create bank transaction entry
+            # Create bank transaction entry (this also updates bank balance)
             txn = TransactionCreate(
                 date=transaction.date, amount=transaction.amount,
                 type="Income", mode="Bank", category=None,
@@ -501,8 +499,7 @@ async def partner_transaction(transaction: PartnerTransaction):
                 {"$inc": {"total_withdrawals": transaction.amount, "current_balance": -transaction.amount},
                  "$set": {"updated_at": datetime.now(timezone.utc)}}
             )
-            # Withdrawal deducts from bank
-            await update_balance_field("bank_balance", -transaction.amount)
+            # Create bank transaction entry (this also updates bank balance)
             txn = TransactionCreate(
                 date=transaction.date, amount=transaction.amount,
                 type="Expense", mode="Bank", category=None,
