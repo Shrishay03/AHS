@@ -5,11 +5,13 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from './AuthContext';
+import { useIsDesktop } from './useResponsive';
 
 const T = { primary: '#2E7D32', bg: '#F5F5F5', card: '#FFF', text: '#212121', muted: '#757575', err: '#F44336' };
 
 export default function LoginScreen() {
   const { login } = useAuth();
+  const isDesktop = useIsDesktop();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -100,7 +102,7 @@ export default function LoginScreen() {
 
 const s = StyleSheet.create({
   container: { flex: 1, backgroundColor: T.bg },
-  content: { flex: 1, justifyContent: 'center', padding: 24 },
+  content: { flex: 1, justifyContent: 'center', padding: 24, maxWidth: 440, alignSelf: 'center', width: '100%' },
   logoSection: { alignItems: 'center', marginBottom: 40 },
   logoCircle: { width: 96, height: 96, borderRadius: 48, backgroundColor: T.primary, justifyContent: 'center', alignItems: 'center', marginBottom: 16 },
   appName: { fontSize: 28, fontWeight: 'bold', color: T.text, lineHeight: 34 },

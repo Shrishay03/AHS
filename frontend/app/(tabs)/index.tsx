@@ -7,12 +7,14 @@ import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from 'expo-router';
 import { useAuth } from '../../src/AuthContext';
 import { useApi } from '../../src/useApi';
+import { useIsDesktop } from '../../src/useResponsive';
 
 const T = { primary: '#2E7D32', secondary: '#1976D2', bg: '#F5F5F5', card: '#FFF', text: '#212121', muted: '#757575', ok: '#4CAF50', warn: '#FF9800', err: '#F44336' };
 
 export default function Dashboard() {
   const { logout } = useAuth();
   const { apiFetch } = useApi();
+  const isDesktop = useIsDesktop();
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [d, setD] = useState<any>(null);
@@ -37,8 +39,18 @@ export default function Dashboard() {
   const months = d?.monthly_breakdown ? Object.entries(d.monthly_breakdown).sort((a: any, b: any) => b[0].localeCompare(a[0])) : [];
 
   return (
-    <ScrollView style={s.container} contentContainerStyle={s.content}
+    <ScrollView style={s.container} contentContainerStyle={[s.content, isDesktop && { paddingHorizontal: 32, paddingTop: 24, maxWidth: 1200 }]}
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); fetchDashboard(); }} colors={[T.primary]} />}>
+
+      {/* Desktop Header */}
+      {isDesktop && (
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
+          <View>
+            <Text style={{ fontSize: 28, fontWeight: 'bold', color: T.text }}>Dashboard</Text>
+            <Text style={{ fontSize: 14, color: T.muted }}>Real-time business overview</Text>
+          </View>
+        </View>
+      )}
 
       {/* Main Balance Card */}
       <View style={[s.card, { backgroundColor: T.primary }]}>
@@ -53,14 +65,14 @@ export default function Dashboard() {
         </View>
       </View>
 
-      {/* Stats Grid */}
-      <View style={{ flexDirection: 'row', gap: 12, marginBottom: 16 }}>
-        <View style={[s.card, { flex: 1, borderLeftWidth: 4, borderLeftColor: T.warn, alignItems: 'center', padding: 14 }]}>
+      {/* Stats Grid - 4 columns on desktop */}
+      <View style={[{ flexDirection: 'row', gap: 12, marginBottom: 16, flexWrap: isDesktop ? 'wrap' : 'nowrap' }]}>
+        <View style={[s.card, { flex: 1, minWidth: isDesktop ? 200 : undefined, borderLeftWidth: 4, borderLeftColor: T.warn, alignItems: 'center', padding: 14 }]}>
           <Ionicons name="trending-up" size={22} color={T.warn} />
           <Text testID="total-receivables" style={s.statVal}>{fmt(d?.total_receivables)}</Text>
           <Text style={s.statLbl}>Receivables</Text>
         </View>
-        <View style={[s.card, { flex: 1, borderLeftWidth: 4, borderLeftColor: T.err, alignItems: 'center', padding: 14 }]}>
+        <View style={[s.card, { flex: 1, minWidth: isDesktop ? 200 : undefined, borderLeftWidth: 4, borderLeftColor: T.err, alignItems: 'center', padding: 14 }]}>
           <Ionicons name="trending-down" size={22} color={T.err} />
           <Text testID="total-expenses" style={s.statVal}>{fmt(d?.total_expenses)}</Text>
           <Text style={s.statLbl}>Expenses</Text>
