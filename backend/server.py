@@ -424,25 +424,51 @@ async def export_transactions(format: str = "csv", start_date: Optional[str] = N
 
 def get_drive_flow():
     redirect_uri = os.environ.get("GOOGLE_DRIVE_REDIRECT_URI")
-    return Flow.from_client_config(
-        {"web": {"client_id": os.environ["GOOGLE_CLIENT_ID"], "client_secret": os.environ["GOOGLE_CLIENT_SECRET"],
-                 "auth_uri": "https://accounts.google.com/o/oauth2/auth", "token_uri": "https://oauth2.googleapis.com/token",
-                 "redirect_uris": [redirect_uri]}},
+
+    client_config = {
+        "web": {
+            "client_id": os.environ["GOOGLE_CLIENT_ID"],
+            "client_secret": os.environ["GOOGLE_CLIENT_SECRET"],
+            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+            "token_uri": "https://oauth2.googleapis.com/token",
+            "redirect_uris": [redirect_uri]
+        }
+    }
+
+    flow = Flow.from_client_config(
+        client_config,
         scopes=["https://www.googleapis.com/auth/drive.file"],
         redirect_uri=redirect_uri
     )
 
+    # disable PKCE requirement
+    flow.code_verifier = None
+
+    return flow
+
 @api_router.get("/drive/connect")
 async def connect_drive(user=Depends(get_current_user)):
     flow = get_drive_flow()
-    auth_url, state = flow.authorization_url(access_type='offline', include_granted_scopes='true', prompt='consent', state=user["id"])
+    auth_url, state = flow.authorization_url(
+    access_type="offline",
+    include_granted_scopes="true",
+    prompt="consent",
+    state=user["id"],
+    code_challenge=None,
+    code_challenge_method=None
+)
     return {"authorization_url": auth_url}
 
 @api_router.get("/oauth/drive/callback")
 async def drive_callback(code: str, state: str = ""):
     try:
         flow = get_drive_flow()
-        flow.fetch_token(code=code)
+
+        flow.fetch_token(
+            code=code,
+            client_secret=os.environ["GOOGLE_CLIENT_SECRET"]
+        )
+
         creds = flow.credentials
         await db.drive_credentials.update_one(
             {"user_id": state},
