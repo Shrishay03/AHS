@@ -32,7 +32,14 @@ export default function Dashboard() {
 
   useFocusEffect(useCallback(() => { fetchDashboard(); }, []));
 
-  const fmt = (n: number) => `\u20b9${(n || 0).toLocaleString('en-IN')}`;
+  const fmt = (n: number) => `₹${(n || 0).toLocaleString('en-IN')}`;
+
+const formatDate = (dateStr: string) => {
+  if (!dateStr) return '';
+  const d = dateStr.slice(0, 10).split('-');
+  if (d.length !== 3) return dateStr;
+  return `${d[2]}-${d[1]}-${d[0]}`;
+};
 
   if (loading) return <View style={s.center}><ActivityIndicator size="large" color={T.primary} /></View>;
 
@@ -175,7 +182,7 @@ export default function Dashboard() {
             <View key={i} style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#F0F0F0' }}>
               <View style={{ flex: 1 }}>
                 <Text style={{ fontSize: 13, fontWeight: '600', color: T.text }}>{t.description || t.category || t.type}</Text>
-                <Text style={{ fontSize: 11, color: T.muted }}>{typeof t.date === 'string' ? t.date.slice(0, 10) : ''}</Text>
+                <Text style={{ fontSize: 11, color: T.muted }}>{typeof t.date === 'string' ? formatDate(t.date) : ''}</Text>
               </View>
               <Text style={{ fontSize: 14, fontWeight: 'bold', color: t.type === 'Income' ? T.ok : T.err }}>
                 {t.type === 'Income' ? '+' : '-'}{fmt(t.amount)}
@@ -214,28 +221,79 @@ export default function Dashboard() {
             </TouchableOpacity>
           ) : (
             <>
-              <TouchableOpacity testID="backup-now-btn" style={{ flex: 1, backgroundColor: '#E8F5E9', paddingVertical: 10, borderRadius: 8, alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: 6 }}
-                onPress={async () => {
-                  setBackingUp(true);
-                  try {
-                    const r = await apiFetch('/api/drive/backup', { method: 'POST' });
-                    const data = await r.json();
-                    Alert.alert('Backup Complete', data.message || 'Backup successful');
-                    fetchDashboard();
-                  } catch (e) { Alert.alert('Error', 'Backup failed'); }
-                  finally { setBackingUp(false); }
-                }} disabled={backingUp}>
-                {backingUp ? <ActivityIndicator size="small" color={T.primary} /> : <Ionicons name="cloud-upload" size={16} color={T.primary} />}
-                <Text style={{ fontSize: 13, fontWeight: '600', color: T.primary }}>{backingUp ? 'Backing up...' : 'Backup Now'}</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={{ paddingHorizontal: 12, paddingVertical: 10, borderRadius: 8, backgroundColor: '#FFEBEE' }}
-                onPress={async () => {
-                  await apiFetch('/api/drive/disconnect');
-                  fetchDashboard();
-                }}>
-                <Ionicons name="unlink" size={16} color={T.err} />
-              </TouchableOpacity>
-            </>
+  <TouchableOpacity
+    testID="backup-now-btn"
+    style={{
+      flex: 1,
+      backgroundColor: '#E8F5E9',
+      paddingVertical: 10,
+      borderRadius: 8,
+      alignItems: 'center',
+      flexDirection: 'row',
+      justifyContent: 'center',
+      gap: 6
+    }}
+    onPress={async () => {
+      setBackingUp(true);
+      try {
+        const r = await apiFetch('/api/drive/backup', { method: 'POST' });
+        const data = await r.json();
+        Alert.alert('Backup Complete', data.message || 'Backup successful');
+        fetchDashboard();
+      } catch (e) {
+        Alert.alert('Error', 'Backup failed');
+      } finally {
+        setBackingUp(false);
+      }
+    }}
+    disabled={backingUp}
+  >
+    {backingUp ? (
+      <ActivityIndicator size="small" color={T.primary} />
+    ) : (
+      <Ionicons name="cloud-upload" size={16} color={T.primary} />
+    )}
+    <Text style={{ fontSize: 13, fontWeight: '600', color: T.primary }}>
+      {backingUp ? 'Backing up...' : 'Backup Now'}
+    </Text>
+  </TouchableOpacity>
+
+  <TouchableOpacity
+    style={{
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+      borderRadius: 8,
+      backgroundColor: '#E3F2FD'
+    }}
+    onPress={async () => {
+      try {
+        const r = await apiFetch('/api/drive/restore', { method: 'POST' });
+        const data = await r.json();
+        Alert.alert('Restore', data.message || 'Restore completed');
+        fetchDashboard();
+      } catch (e) {
+        Alert.alert('Error', 'Restore failed');
+      }
+    }}
+  >
+    <Ionicons name="refresh" size={16} color={T.secondary} />
+  </TouchableOpacity>
+
+  <TouchableOpacity
+    style={{
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+      borderRadius: 8,
+      backgroundColor: '#FFEBEE'
+    }}
+    onPress={async () => {
+      await apiFetch('/api/drive/disconnect');
+      fetchDashboard();
+    }}
+  >
+    <Ionicons name="unlink" size={16} color={T.err} />
+  </TouchableOpacity>
+</>
           )}
         </View>
         <Text style={{ fontSize: 10, color: T.muted, marginTop: 8 }}>Auto-backup runs every 24 hours when connected</Text>
