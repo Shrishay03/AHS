@@ -43,7 +43,13 @@ export default function Projects() {
 
   useFocusEffect(useCallback(() => { fetchProjects(); }, []));
 
-  const fmt = (n: number) => `\u20b9${(n || 0).toLocaleString('en-IN')}`;
+  const fmt = (n: number) => `₹${(n || 0).toLocaleString('en-IN')}`;
+
+const formatDate = (dateStr: string) => {
+  if (!dateStr) return '';
+  const d = dateStr.slice(0, 10).split('-');
+  return `${d[2]}-${d[1]}-${d[0]}`;
+};
 
   const openAdd = () => {
     setEditingProject(null);
@@ -159,7 +165,7 @@ export default function Projects() {
                 <View key={i} style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: '#F0F0F0' }}>
                   <View>
                     <Text style={{ fontSize: 13, fontWeight: '600', color: T.text }}>{e.bag_type}</Text>
-                    <Text style={{ fontSize: 11, color: T.muted }}>{typeof e.date === 'string' ? e.date.slice(0, 10) : ''}</Text>
+                    <Text style={{ fontSize: 11, color: T.muted }}>{typeof e.date === 'string' ? formatDate(e.date) : ''}</Text>
                   </View>
                   <Text style={{ fontSize: 14, fontWeight: 'bold', color: T.secondary }}>{e.quantity} bags</Text>
                 </View>
@@ -177,7 +183,7 @@ export default function Projects() {
                 <View key={i} style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: '#F0F0F0' }}>
                   <View>
                     <Text style={{ fontSize: 13, fontWeight: '600', color: T.text }}>{t.description || t.category || t.type}</Text>
-                    <Text style={{ fontSize: 11, color: T.muted }}>{typeof t.date === 'string' ? t.date.slice(0, 10) : ''} | {t.mode}</Text>
+                    <Text style={{ fontSize: 11, color: T.muted }}>{typeof t.date === 'string' ? formatDate(t.date) : ''} | {t.mode}</Text>
                   </View>
                   <Text style={{ fontSize: 14, fontWeight: 'bold', color: t.type === 'Income' ? T.ok : T.err }}>
                     {t.type === 'Income' ? '+' : '-'}{fmt(t.amount)}
@@ -303,7 +309,7 @@ export default function Projects() {
               <Label text="Quantity (bags) *" />
               <TextInput style={s.input} value={bagForm.quantity} onChangeText={v => setBagForm({ ...bagForm, quantity: v })} keyboardType="numeric" placeholder="0" />
               <Label text="Date" />
-              <TextInput style={s.input} value={bagForm.date} onChangeText={v => setBagForm({ ...bagForm, date: v })} placeholder="YYYY-MM-DD" />
+              <TextInput style={s.input} value={bagForm.date} onChangeText={v => setBagForm({ ...bagForm, date: v })} placeholder="DD-MM-YYYY" />
             </View>
             <View style={s.modalActions}>
               <TouchableOpacity style={[s.modalBtn, { backgroundColor: T.bg }]} onPress={() => setBagModalVisible(false)}>
