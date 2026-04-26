@@ -38,7 +38,13 @@ export default function Transactions() {
 
   useFocusEffect(useCallback(() => { fetchData(); }, []));
 
-  const fmt = (n: number) => `\u20b9${(n || 0).toLocaleString('en-IN')}`;
+  const fmt = (n: number) => `₹${(n || 0).toLocaleString('en-IN')}`;
+
+const formatDate = (dateStr: string) => {
+  if (!dateStr) return '';
+  const d = dateStr.slice(0, 10).split('-');
+  return `${d[2]}-${d[1]}-${d[0]}`;
+};
 
   const openAdd = () => {
     setEditingTxn(null);
@@ -119,7 +125,7 @@ export default function Transactions() {
                   </View>
                   <View style={{ flex: 1 }}>
                     <Text style={{ fontSize: 13, fontWeight: '600', color: T.text }}>
-                      {typeof t.date === 'string' ? t.date.slice(0, 10) : ''}
+                      {typeof t.date === 'string' ? formatDate(t.date) : ''}
                     </Text>
                     <Text style={{ fontSize: 11, color: T.muted }}>{t.mode}{t.category ? ` | ${t.category}` : ''}</Text>
                     {t.linked_project_name && (
@@ -177,7 +183,7 @@ export default function Transactions() {
               <TextInput style={s.input} value={formData.amount} onChangeText={v => setFormData({ ...formData, amount: v })} keyboardType="numeric" placeholder="0" />
 
               <Label text="Date" />
-              <TextInput style={s.input} value={formData.date} onChangeText={v => setFormData({ ...formData, date: v })} placeholder="YYYY-MM-DD" />
+              <TextInput style={s.input} value={formData.date} onChangeText={v => setFormData({ ...formData, date: v })} placeholder="DD-MM-YYYY" />
 
               <Label text="Mode" />
               <View style={{ flexDirection: 'row', gap: 8 }}>
