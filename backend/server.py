@@ -8,6 +8,7 @@ from fastapi.responses import StreamingResponse, HTMLResponse
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 import os, logging, io, csv, json, asyncio, tempfile
+from openpyxl import Workbook
 from pydantic import BaseModel, Field
 from typing import List, Optional
 from datetime import datetime, timezone, timedelta
@@ -424,51 +425,25 @@ async def export_transactions(format: str = "csv", start_date: Optional[str] = N
 
 def get_drive_flow():
     redirect_uri = os.environ.get("GOOGLE_DRIVE_REDIRECT_URI")
-
-    client_config = {
-        "web": {
-            "client_id": os.environ["GOOGLE_CLIENT_ID"],
-            "client_secret": os.environ["GOOGLE_CLIENT_SECRET"],
-            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-            "token_uri": "https://oauth2.googleapis.com/token",
-            "redirect_uris": [redirect_uri]
-        }
-    }
-
-    flow = Flow.from_client_config(
-        client_config,
+    return Flow.from_client_config(
+        {"web": {"client_id": os.environ["GOOGLE_CLIENT_ID"], "client_secret": os.environ["GOOGLE_CLIENT_SECRET"],
+                 "auth_uri": "https://accounts.google.com/o/oauth2/auth", "token_uri": "https://oauth2.googleapis.com/token",
+                 "redirect_uris": [redirect_uri]}},
         scopes=["https://www.googleapis.com/auth/drive.file"],
         redirect_uri=redirect_uri
     )
 
-    # disable PKCE requirement
-    flow.code_verifier = None
-
-    return flow
-
 @api_router.get("/drive/connect")
 async def connect_drive(user=Depends(get_current_user)):
     flow = get_drive_flow()
-    auth_url, state = flow.authorization_url(
-    access_type="offline",
-    include_granted_scopes="true",
-    prompt="consent",
-    state=user["id"],
-    code_challenge=None,
-    code_challenge_method=None
-)
+    auth_url, state = flow.authorization_url(access_type='offline', include_granted_scopes='true', prompt='consent', state=user["id"])
     return {"authorization_url": auth_url}
 
 @api_router.get("/oauth/drive/callback")
 async def drive_callback(code: str, state: str = ""):
     try:
         flow = get_drive_flow()
-
-        flow.fetch_token(
-            code=code,
-            client_secret=os.environ["GOOGLE_CLIENT_SECRET"]
-        )
-
+        flow.fetch_token(code=code)
         creds = flow.credentials
         await db.drive_credentials.update_one(
             {"user_id": state},
@@ -513,69 +488,118 @@ async def get_drive_service_for_user(user_id: str):
 
 async def run_drive_backup(user_id: str):
     service = await get_drive_service_for_user(user_id)
-    if not service: raise HTTPException(status_code=400, detail="Google Drive not connected")
+    if not service:
+        raise HTTPException(status_code=400, detail="Google Drive not connected")
 
-    # Find or create backup folder
     folder_name = "Aruvi Housing Solutions - Backup"
+
     query = f"name='{folder_name}' and mimeType='application/vnd.google-apps.folder' and trashed=false"
-    results = service.files().list(q=query, spaces='drive', fields='files(id, name)').execute()
+    results = service.files().list(q=query, spaces='drive', fields='files(id,name)').execute()
     folders = results.get('files', [])
+
     if folders:
         folder_id = folders[0]['id']
     else:
-        folder_meta = {'name': folder_name, 'mimeType': 'application/vnd.google-apps.folder'}
-        folder = service.files().create(body=folder_meta, fields='id').execute()
+        folder = service.files().create(
+            body={'name': folder_name, 'mimeType': 'application/vnd.google-apps.folder'},
+            fields='id'
+        ).execute()
         folder_id = folder['id']
 
-    # Create date subfolder
-    date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d_%H-%M")
-    subfolder_meta = {'name': date_str, 'mimeType': 'application/vnd.google-apps.folder', 'parents': [folder_id]}
-    subfolder = service.files().create(body=subfolder_meta, fields='id').execute()
-    subfolder_id = subfolder['id']
+    # ---------- Create Excel ----------
+    wb = Workbook()
+    wb.remove(wb.active)
 
-    uploaded_files = []
-
-    # Export each collection
     collections = {
-        "projects": await db.projects.find().to_list(10000),
-        "transactions": await db.transactions.find().to_list(10000),
-        "partners": await db.partners.find().to_list(10000),
-        "partner_transactions": await db.partner_transactions.find().to_list(10000),
-        "inventory_purchases": await db.inventory_purchases.find().to_list(10000),
+        "Projects": await db.projects.find().to_list(10000),
+        "Transactions": await db.transactions.find().to_list(10000),
+        "Partners": await db.partners.find().to_list(10000),
+        "Partner Transactions": await db.partner_transactions.find().to_list(10000),
+        "Inventory Purchases": await db.inventory_purchases.find().to_list(10000),
     }
 
-    # Add settings and inventory
     settings = await db.settings.find_one()
-    if settings: collections["settings"] = [settings]
-    inv = await db.inventory.find_one()
-    if inv: collections["inventory"] = [inv]
+    inventory = await db.inventory.find_one()
 
-    for name, docs in collections.items():
-        # Convert ObjectId and datetime to strings
-        clean_docs = []
+    if settings:
+        collections["Settings"] = [settings]
+
+    if inventory:
+        collections["Inventory"] = [inventory]
+
+    for sheet_name, docs in collections.items():
+        ws = wb.create_sheet(title=sheet_name[:31])
+
+        if not docs:
+            ws.append(["No Data"])
+            continue
+
+        headers = set()
+
         for doc in docs:
-            clean = {}
-            for k, v in doc.items():
-                if k == "_id": clean["id"] = str(v)
-                elif isinstance(v, ObjectId): clean[k] = str(v)
-                elif isinstance(v, datetime): clean[k] = v.isoformat()
-                else: clean[k] = v
-            clean_docs.append(clean)
+            headers.update(doc.keys())
 
-        # Write JSON file
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
-            json.dump(clean_docs, f, indent=2, default=str)
-            f.flush()
-            file_meta = {'name': f'{name}.json', 'parents': [subfolder_id]}
-            media = MediaFileUpload(f.name, mimetype='application/json')
-            uploaded = service.files().create(body=file_meta, media_body=media, fields='id,name').execute()
-            uploaded_files.append(uploaded['name'])
+        headers = list(headers)
+        ws.append(headers)
 
-    # Log the backup
-    log = {"user_id": user_id, "timestamp": datetime.now(timezone.utc), "folder": date_str, "files": uploaded_files, "status": "success"}
+        for doc in docs:
+            row = []
+            for h in headers:
+                val = doc.get(h, "")
+                if isinstance(val, ObjectId):
+                    val = str(val)
+                elif isinstance(val, datetime):
+                    val = val.strftime("%d-%m-%Y %H:%M")
+                elif isinstance(val, list) or isinstance(val, dict):
+                    val = json.dumps(val)
+                row.append(val)
+            ws.append(row)
+
+    filename = datetime.now().strftime("AHS_Backup_%d-%m-%Y_%H-%M.xlsx")
+
+    with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as tmp:
+        wb.save(tmp.name)
+
+        file_meta = {
+            'name': filename,
+            'parents': [folder_id]
+        }
+
+        media = MediaFileUpload(
+            tmp.name,
+            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        )
+
+        uploaded = service.files().create(
+            body=file_meta,
+            media_body=media,
+            fields='id,name'
+        ).execute()
+
+    # -------- Keep only last 30 backups --------
+    files = service.files().list(
+        q=f"'{folder_id}' in parents and trashed=false",
+        orderBy="createdTime desc",
+        fields="files(id,name)"
+    ).execute().get("files", [])
+
+    if len(files) > 30:
+        for old in files[30:]:
+            service.files().delete(fileId=old["id"]).execute()
+
+    log = {
+        "user_id": user_id,
+        "timestamp": datetime.now(timezone.utc),
+        "folder": filename,
+        "status": "success"
+    }
+
     await db.backup_log.insert_one(log)
 
-    return {"message": f"Backup completed: {len(uploaded_files)} files uploaded", "folder": date_str, "files": uploaded_files}
+    return {
+        "message": "Excel Backup Completed",
+        "file": filename
+    }
 
 @api_router.get("/drive/disconnect")
 async def disconnect_drive(user=Depends(get_current_user)):
