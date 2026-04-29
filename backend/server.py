@@ -8,7 +8,7 @@ from fastapi.responses import StreamingResponse, HTMLResponse
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 import os, logging, io, csv, json, asyncio, tempfile
-from openpyxl import Workbook
+from openpyxl import Workbook, load_workbook
 from pydantic import BaseModel, Field
 from typing import List, Optional
 from datetime import datetime, timezone, timedelta
@@ -17,7 +17,7 @@ import bcrypt, jwt
 
 # Google Drive imports
 from googleapiclient.discovery import build
-from googleapiclient.http import MediaFileUpload
+from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload
 from google_auth_oauthlib.flow import Flow
 from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request as GoogleRequest
@@ -203,6 +203,8 @@ async def get_dashboard(user=Depends(get_current_user)):
     except Exception as e:
         logger.error(f"Dashboard error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+        
+        
 
 
 # ========== PROJECTS ==========
@@ -471,6 +473,97 @@ async def trigger_backup(user=Depends(get_current_user)):
     try:
         result = await run_drive_backup(user["id"])
         return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+        
+@api_router.post("/drive/restore")
+async def restore_backup(user=Depends(get_current_user)):
+    try:
+        service = await get_drive_service_for_user(user["id"])
+        if not service:
+            raise HTTPException(status_code=400, detail="Drive not connected")
+
+        folder_name = "Aruvi Housing Solutions - Backup"
+
+        query = f"name='{folder_name}' and mimeType='application/vnd.google-apps.folder' and trashed=false"
+        folders = service.files().list(q=query, spaces='drive', fields='files(id,name)').execute().get("files", [])
+
+        if not folders:
+            raise HTTPException(status_code=404, detail="Backup folder not found")
+
+        folder_id = folders[0]["id"]
+
+        files = service.files().list(
+            q=f"'{folder_id}' in parents and trashed=false",
+            orderBy="createdTime desc",
+            fields="files(id,name)"
+        ).execute().get("files", [])
+
+        if not files:
+            raise HTTPException(status_code=404, detail="No backup file found")
+
+        latest = files[0]
+
+        request = service.files().get_media(fileId=latest["id"])
+        fh = io.BytesIO()
+        downloader = MediaIoBaseDownload(fh, request)
+
+        done = False
+        while not done:
+            status, done = downloader.next_chunk()
+
+        fh.seek(0)
+
+        wb = load_workbook(fh)
+
+        mapping = {
+            "Projects": db.projects,
+            "Transactions": db.transactions,
+            "Partners": db.partners,
+            "Partner Transactions": db.partner_transactions,
+            "Inventory Purchases": db.inventory_purchases,
+            "Settings": db.settings,
+            "Inventory": db.inventory
+        }
+
+        for sheet in wb.sheetnames:
+            if sheet not in mapping:
+                continue
+
+            collection = mapping[sheet]
+
+            await collection.delete_many({})
+
+            ws = wb[sheet]
+            rows = list(ws.values)
+
+            if len(rows) < 2:
+                continue
+
+            headers = rows[0]
+
+            docs = []
+
+            for row in rows[1:]:
+                item = {}
+
+                for i, val in enumerate(row):
+                    key = headers[i]
+                    item[key] = val
+
+                if "_id" in item:
+                    del item["_id"]
+
+                docs.append(item)
+
+            if docs:
+                await collection.insert_many(docs)
+
+        return {
+            "message": "Restore completed",
+            "file": latest["name"]
+        }
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
