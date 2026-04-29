@@ -500,6 +500,28 @@ async def disconnect(user=Depends(get_current_user)):
     await db.drive_credentials.delete_many({"user_id": user["id"]})
     return {"message": "Disconnected"}
 
+@api_router.get("/projects")
+async def get_projects(user=Depends(get_current_user)):
+    rows = await db.projects.find().sort("_id", -1).to_list(1000)
+    return [serialize_doc(x) for x in rows]
+
+
+@api_router.get("/partners")
+async def get_partners(user=Depends(get_current_user)):
+    rows = await db.partners.find().sort("_id", -1).to_list(1000)
+    return [serialize_doc(x) for x in rows]
+
+
+@api_router.get("/inventory")
+async def get_inventory(user=Depends(get_current_user)):
+    rows = await db.inventory.find().sort("_id", -1).to_list(1000)
+    return [serialize_doc(x) for x in rows]
+
+
+@api_router.get("/inventory-purchases")
+async def get_inventory_purchases(user=Depends(get_current_user)):
+    rows = await db.inventory_purchases.find().sort("_id", -1).to_list(1000)
+    return [serialize_doc(x) for x in rows]
 
 # ======================================================
 # STARTUP
