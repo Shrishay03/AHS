@@ -251,7 +251,7 @@ const formatDate = (dateStr: string) => {
                 onPress={() => { setFormData({ ...formData, linked_project_id: '', linked_project_name: '' }); setProjectPickerVisible(false); }}>
                 <Text style={{ color: T.muted }}>None</Text>
               </TouchableOpacity>
-              {projects.map(p => (
+              {(projects || []).map(p => (
                 <TouchableOpacity key={p.id} style={{ padding: 16, borderBottomWidth: 1, borderBottomColor: '#F0F0F0' }}
                   onPress={() => { setFormData({ ...formData, linked_project_id: p.id, linked_project_name: p.name }); setProjectPickerVisible(false); }}>
                   <Text style={{ fontWeight: '600', color: T.text }}>{p.name}</Text>
