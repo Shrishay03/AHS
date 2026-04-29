@@ -142,6 +142,32 @@ async def get_settings():
 async def update_balance(field: str, amount: float):
     await db.settings.update_one({}, {"$inc": {field: amount}}, upsert=True)
 
+async def recalculate_balances():
+    txns = await db.transactions.find().to_list(10000)
+
+    bank = 0
+    petty = 0
+
+    for t in txns:
+        amt = float(t.get("amount", 0))
+        sign = 1 if t.get("type") == "Income" else -1
+
+        if t.get("mode") == "Bank":
+            bank += amt * sign
+
+        elif t.get("mode") == "Petty Cash":
+            petty += amt * sign
+
+    await db.settings.update_one(
+        {},
+        {
+            "$set": {
+                "bank_balance": bank,
+                "petty_cash_balance": petty
+            }
+        },
+        upsert=True
+    )
 
 # ======================================================
 # AUTH
@@ -183,20 +209,42 @@ async def dashboard(user=Depends(get_current_user)):
     settings = await get_settings()
 
     txns = await db.transactions.find().to_list(10000)
+    projects = await db.projects.find().to_list(10000)
+    partners = await db.partners.find().to_list(10000)
+    inventory = await db.inventory.find().to_list(10000)
 
-    income = sum(t["amount"] for t in txns if t["type"] == "Income")
-    expense = sum(t["amount"] for t in txns if t["type"] == "Expense")
+    income = sum(float(t.get("amount", 0)) for t in txns if t.get("type") == "Income")
+    expense = sum(float(t.get("amount", 0)) for t in txns if t.get("type") == "Expense")
+
+    receivables = 0
+    for p in projects:
+        total = float(p.get("total_amount", 0) or 0)
+        received = float(p.get("received_amount", 0) or 0)
+        receivables += max(total - received, 0)
+
+    partner_balance = sum(float(p.get("balance", 0) or 0) for p in partners)
+    stock_total = sum(float(i.get("stock", 0) or 0) for i in inventory)
+
+    recent_bank = [
+        serialize_doc(t) for t in txns
+        if t.get("mode") == "Bank"
+    ][-5:]
 
     return {
         "bank_balance": settings.get("bank_balance", 0),
         "petty_cash_balance": settings.get("petty_cash_balance", 0),
         "total_balance":
-            settings.get("bank_balance", 0)
-            + settings.get("petty_cash_balance", 0),
+            settings.get("bank_balance", 0) +
+            settings.get("petty_cash_balance", 0),
 
         "total_income": income,
         "total_expenses": expense,
         "profit_loss": income - expense,
+
+        "receivables": receivables,
+        "partner_balance_total": partner_balance,
+        "inventory_stock_total": stock_total,
+        "recent_bank_transactions": recent_bank,
 
         "drive_connected":
             await db.drive_credentials.find_one({"user_id": user["id"]})
@@ -239,6 +287,26 @@ async def add_transaction(
     created = await db.transactions.find_one({"_id": result.inserted_id})
     return serialize_doc(created)
 
+@api_router.put("/transactions/{item_id}")
+async def update_transaction(item_id: str, data: dict, user=Depends(get_current_user)):
+    await db.transactions.update_one(
+        {"_id": ObjectId(item_id)},
+        {"$set": data}
+    )
+
+    await recalculate_balances()
+
+    row = await db.transactions.find_one({"_id": ObjectId(item_id)})
+    return serialize_doc(row)
+
+
+@api_router.delete("/transactions/{item_id}")
+async def delete_transaction(item_id: str, user=Depends(get_current_user)):
+    await db.transactions.delete_one({"_id": ObjectId(item_id)})
+
+    await recalculate_balances()
+
+    return {"message": "Deleted"}
 
 # ======================================================
 # EXPORT CSV
@@ -432,15 +500,13 @@ async def run_drive_backup(user_id: str):
         folder_id = created["id"]
 
     wb = Workbook()
+
+    # Transactions
     ws = wb.active
     ws.title = "Transactions"
+    ws.append(["Date", "Type", "Mode", "Category", "Amount", "Description"])
 
     txns = await db.transactions.find().to_list(10000)
-
-    ws.append([
-        "Date", "Type", "Mode", "Category", "Amount", "Description"
-    ])
-
     for t in txns:
         ws.append([
             t.get("date", ""),
@@ -449,6 +515,52 @@ async def run_drive_backup(user_id: str):
             t.get("category", ""),
             t.get("amount", 0),
             t.get("description", "")
+        ])
+
+    # Projects
+    ws2 = wb.create_sheet("Projects")
+    ws2.append(["Name", "Total Amount", "Received Amount"])
+
+    projects = await db.projects.find().to_list(10000)
+    for p in projects:
+        ws2.append([
+            p.get("name", ""),
+            p.get("total_amount", 0),
+            p.get("received_amount", 0)
+        ])
+
+    # Partners
+    ws3 = wb.create_sheet("Partners")
+    ws3.append(["Name", "Balance"])
+
+    partners = await db.partners.find().to_list(10000)
+    for p in partners:
+        ws3.append([
+            p.get("name", ""),
+            p.get("balance", 0)
+        ])
+
+    # Inventory
+    ws4 = wb.create_sheet("Inventory")
+    ws4.append(["Bag Type", "Stock"])
+
+    inv = await db.inventory.find().to_list(10000)
+    for r in inv:
+        ws4.append([
+            r.get("bag_type", ""),
+            r.get("stock", 0)
+        ])
+
+    # Inventory Purchases
+    ws5 = wb.create_sheet("Inventory Purchases")
+    ws5.append(["Date", "Bag Type", "Quantity"])
+
+    pur = await db.inventory_purchases.find().to_list(10000)
+    for r in pur:
+        ws5.append([
+            r.get("date", ""),
+            r.get("bag_type", ""),
+            r.get("quantity", 0)
         ])
 
     filename = datetime.now().strftime(
@@ -500,23 +612,146 @@ async def disconnect(user=Depends(get_current_user)):
     await db.drive_credentials.delete_many({"user_id": user["id"]})
     return {"message": "Disconnected"}
 
+# =========================
+# PROJECTS
+# =========================
+
 @api_router.get("/projects")
 async def get_projects(user=Depends(get_current_user)):
     rows = await db.projects.find().sort("_id", -1).to_list(1000)
     return [serialize_doc(x) for x in rows]
 
+@api_router.post("/projects")
+async def create_project(data: dict, user=Depends(get_current_user)):
+    data["created_at"] = datetime.now(timezone.utc)
+    data.setdefault("received_amount", 0)
+    data.setdefault("bag_usage_history", [])
+    r = await db.projects.insert_one(data)
+    row = await db.projects.find_one({"_id": r.inserted_id})
+    return serialize_doc(row)
+
+@api_router.put("/projects/{item_id}")
+async def update_project(item_id: str, data: dict, user=Depends(get_current_user)):
+    await db.projects.update_one(
+        {"_id": ObjectId(item_id)},
+        {"$set": data}
+    )
+    row = await db.projects.find_one({"_id": ObjectId(item_id)})
+    return serialize_doc(row)
+
+@api_router.delete("/projects/{item_id}")
+async def delete_project(item_id: str, user=Depends(get_current_user)):
+    await db.projects.delete_one({"_id": ObjectId(item_id)})
+    return {"message": "Deleted"}
+
+@api_router.get("/projects/{item_id}")
+async def get_project(item_id: str, user=Depends(get_current_user)):
+    row = await db.projects.find_one({"_id": ObjectId(item_id)})
+    if not row:
+        raise HTTPException(status_code=404, detail="Not found")
+    return serialize_doc(row)
+
+@api_router.post("/projects/{item_id}/bag-usage")
+async def add_bag_usage(item_id: str, data: dict, user=Depends(get_current_user)):
+    qty = int(data.get("quantity", 0))
+    bag_type = data.get("bag_type", "Naturoplast")
+
+    await db.projects.update_one(
+        {"_id": ObjectId(item_id)},
+        {"$push": {
+            "bag_usage_history": {
+                "date": data.get("date"),
+                "bag_type": bag_type,
+                "quantity": qty
+            }
+        }}
+    )
+
+    await db.inventory.update_one(
+        {"bag_type": bag_type},
+        {"$inc": {"stock": -qty}},
+        upsert=True
+    )
+
+    row = await db.projects.find_one({"_id": ObjectId(item_id)})
+    return serialize_doc(row)
+
+# =========================
+# PARTNERS
+# =========================
 
 @api_router.get("/partners")
 async def get_partners(user=Depends(get_current_user)):
     rows = await db.partners.find().sort("_id", -1).to_list(1000)
     return [serialize_doc(x) for x in rows]
 
+@api_router.post("/partners")
+async def create_partner(data: dict, user=Depends(get_current_user)):
+    data.setdefault("balance", 0)
+    r = await db.partners.insert_one(data)
+    row = await db.partners.find_one({"_id": r.inserted_id})
+    return serialize_doc(row)
+
+@api_router.put("/partners/{item_id}")
+async def update_partner(item_id: str, data: dict, user=Depends(get_current_user)):
+    await db.partners.update_one(
+        {"_id": ObjectId(item_id)},
+        {"$set": data}
+    )
+    row = await db.partners.find_one({"_id": ObjectId(item_id)})
+    return serialize_doc(row)
+
+@api_router.delete("/partners/{item_id}")
+async def delete_partner(item_id: str, user=Depends(get_current_user)):
+    await db.partners.delete_one({"_id": ObjectId(item_id)})
+    return {"message": "Deleted"}
+
+@api_router.post("/partners/transaction")
+async def partner_txn(data: dict, user=Depends(get_current_user)):
+    pid = data["partner_id"]
+    amt = float(data["amount"])
+    txn_type = data.get("type", "Investment")
+
+    delta = amt if txn_type == "Investment" else -amt
+
+    await db.partners.update_one(
+        {"_id": ObjectId(pid)},
+        {"$inc": {"balance": delta}}
+    )
+
+    await db.partner_transactions.insert_one({
+        **data,
+        "created_at": datetime.now(timezone.utc)
+    })
+
+    return {"message": "Saved"}
+
+# =========================
+# INVENTORY
+# =========================
 
 @api_router.get("/inventory")
 async def get_inventory(user=Depends(get_current_user)):
     rows = await db.inventory.find().sort("_id", -1).to_list(1000)
     return [serialize_doc(x) for x in rows]
 
+@api_router.post("/inventory/purchase")
+async def add_inventory_purchase(data: dict, user=Depends(get_current_user)):
+    qty = int(data.get("quantity", 0))
+    bag_type = data.get("bag_type", "Naturoplast")
+
+    await db.inventory.update_one(
+        {"bag_type": bag_type},
+        {"$inc": {"stock": qty}},
+        upsert=True
+    )
+
+    await db.inventory_purchases.insert_one({
+        **data,
+        "created_at": datetime.now(timezone.utc)
+    })
+
+    return {"message": "Saved"}
 
 @api_router.get("/inventory-purchases")
 async def get_inventory_purchases(user=Depends(get_current_user)):
