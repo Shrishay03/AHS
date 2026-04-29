@@ -480,13 +480,19 @@ async def trigger_backup(user=Depends(get_current_user)):
 async def restore_backup(user=Depends(get_current_user)):
     try:
         service = await get_drive_service_for_user(user["id"])
+
         if not service:
             raise HTTPException(status_code=400, detail="Drive not connected")
 
         folder_name = "Aruvi Housing Solutions - Backup"
 
         query = f"name='{folder_name}' and mimeType='application/vnd.google-apps.folder' and trashed=false"
-        folders = service.files().list(q=query, spaces='drive', fields='files(id,name)').execute().get("files", [])
+
+        folders = service.files().list(
+            q=query,
+            spaces="drive",
+            fields="files(id,name)"
+        ).execute().get("files", [])
 
         if not folders:
             raise HTTPException(status_code=404, detail="Backup folder not found")
@@ -505,6 +511,7 @@ async def restore_backup(user=Depends(get_current_user)):
         latest = files[0]
 
         request = service.files().get_media(fileId=latest["id"])
+
         fh = io.BytesIO()
         downloader = MediaIoBaseDownload(fh, request)
 
@@ -527,6 +534,7 @@ async def restore_backup(user=Depends(get_current_user)):
         }
 
         for sheet in wb.sheetnames:
+
             if sheet not in mapping:
                 continue
 
@@ -541,14 +549,25 @@ async def restore_backup(user=Depends(get_current_user)):
                 continue
 
             headers = rows[0]
-
             docs = []
 
             for row in rows[1:]:
+
                 item = {}
 
                 for i, val in enumerate(row):
+
                     key = headers[i]
+
+                    if isinstance(val, str):
+                        txt = val.strip()
+
+                        if txt.startswith("[") or txt.startswith("{"):
+                            try:
+                                val = json.loads(txt)
+                            except:
+                                pass
+
                     item[key] = val
 
                 if "_id" in item:
@@ -559,6 +578,36 @@ async def restore_backup(user=Depends(get_current_user)):
             if docs:
                 await collection.insert_many(docs)
 
+        # rebuild balances after restore
+
+        bank = 0
+        petty = 0
+
+        txns = await db.transactions.find().to_list(10000)
+
+        for t in txns:
+
+            amt = float(t.get("amount", 0) or 0)
+
+            if t.get("mode") == "Bank":
+                if t.get("type") == "Income":
+                    bank += amt
+                else:
+                    bank -= amt
+
+            elif t.get("mode") == "Petty Cash":
+                if t.get("type") == "Income":
+                    petty += amt
+                else:
+                    petty -= amt
+
+        await db.settings.delete_many({})
+
+        await db.settings.insert_one({
+            "bank_balance": bank,
+            "petty_cash_balance": petty
+        })
+
         return {
             "message": "Restore completed",
             "file": latest["name"]
@@ -566,8 +615,6 @@ async def restore_backup(user=Depends(get_current_user)):
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
-async def get_drive_service_for_user(user_id: str):
     creds_doc = await db.drive_credentials.find_one({"user_id": user_id})
     if not creds_doc: return None
     creds = Credentials(token=creds_doc["access_token"], refresh_token=creds_doc.get("refresh_token"),
