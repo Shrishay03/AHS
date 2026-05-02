@@ -69,20 +69,36 @@ export default function Partners() {
   };
 
   const handleAddTxn = async () => {
-    if (!txnData.amount) { Alert.alert('Error', 'Enter amount'); return; }
-    try {
-      const payload = {
-        partner_id: selectedPartner.id,
+  if (!txnData.amount) {
+    Alert.alert('Error', 'Enter amount');
+    return;
+  }
+
+  try {
+    const r = await apiFetch(`/api/partners/${selectedPartner.id}/transaction`, {
+      method: 'POST',
+      body: JSON.stringify({
         amount: parseFloat(txnData.amount),
-        type: txnData.type,
-        date: txnData.date,
-      };
-      const r = await apiFetch(`/api/partners/transaction`, {
-        method: 'POST', body: JSON.stringify(payload),
-      });
-      if (r.ok) { setTxnModalVisible(false); fetchPartners(); Alert.alert('Success', `${txnData.type} of ${fmt(parseFloat(txnData.amount))} recorded. Bank balance updated.`); }
-    } catch (e) { Alert.alert('Error', 'Failed'); }
-  };
+        type: txnData.type === 'Investment' ? 'invest' : 'withdraw'
+      }),
+    });
+
+    if (r.ok) {
+      setTxnModalVisible(false);
+      fetchPartners();
+
+      Alert.alert(
+        'Success',
+        `${txnData.type} of ₹${parseFloat(txnData.amount).toLocaleString()} recorded`
+      );
+    } else {
+      Alert.alert('Error', 'Failed to save transaction');
+    }
+
+  } catch (e) {
+    Alert.alert('Error', 'Something went wrong');
+  }
+};
 
   if (loading) return <View style={s.center}><ActivityIndicator size="large" color={T.primary} /></View>;
 
@@ -126,26 +142,16 @@ export default function Partners() {
 
               {/* Transaction History (Expandable) */}
               {expandedId === p.id && (
-                <View style={{ marginBottom: 12, backgroundColor: T.bg, borderRadius: 8, padding: 12 }}>
-                  <Text style={{ fontSize: 13, fontWeight: 'bold', color: T.text, marginBottom: 8 }}>Transaction History</Text>
-                  {(p.transaction_history || []).length === 0 ? (
-                    <Text style={{ fontSize: 12, color: T.muted }}>No transactions yet</Text>
-                  ) : (
-                    (p.transaction_history || []).map((t: any, i: number) => (
-                      <View key={i} style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: '#E0E0E0' }}>
-                        <View>
-                          <Text style={{ fontSize: 12, fontWeight: '600', color: T.text }}>{t.type}</Text>
-                          <Text style={{ fontSize: 11, color: T.muted }}>{typeof t.date === 'string' ? t.date.slice(0, 10) : ''}</Text>
-                        </View>
-                        <Text style={{ fontSize: 13, fontWeight: 'bold', color: t.type === 'Investment' ? T.ok : T.err }}>
-                          {t.type === 'Investment' ? '+' : '-'}{fmt(t.amount)}
-                        </Text>
-                      </View>
-                    ))
-                  )}
-                </View>
-              )}
-
+              <View style={{ marginBottom: 12, backgroundColor: T.bg, borderRadius: 8, padding: 12 }}>
+                <Text style={{ fontSize: 13, fontWeight: 'bold', color: T.text, marginBottom: 8 }}>
+                  Transaction History
+                </Text>
+                
+                <Text style={{ fontSize: 12, color: T.muted }}>
+                  Transactions are recorded successfully. View them in the Transactions tab.
+                </Text>
+              </View>
+            )}
               <View style={{ flexDirection: 'row', gap: 8 }}>
                 <TouchableOpacity testID={`add-partner-txn-${p.id}`} style={[s.actBtn, { flex: 2, backgroundColor: '#E8F5E9' }]} onPress={() => openTxnModal(p)}>
                   <Ionicons name="cash-outline" size={16} color={T.primary} />
