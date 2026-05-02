@@ -701,14 +701,36 @@ async def add_bag_usage(item_id: str, data: dict, user=Depends(get_current_user)
 @api_router.get("/partners")
 async def get_partners(user=Depends(get_current_user)):
     rows = await db.partners.find().sort("_id", -1).to_list(1000)
-    return [serialize_doc(x) for x in rows]
+    result = []
+    for p in rows:
+        p = serialize_doc(p)
+        # Compute totals from partner_transactions collection
+        pid = p["id"]
+        all_txns = await db.partner_transactions.find({"partner_id": pid}).to_list(10000)
+        total_invested = sum(
+            float(t.get("amount", 0)) for t in all_txns if t.get("type") == "Investment"
+        )
+        total_withdrawn = sum(
+            float(t.get("amount", 0)) for t in all_txns if t.get("type") == "Withdrawal"
+        )
+        current_balance = total_invested - total_withdrawn
+        p["total_investment"] = total_invested
+        p["total_withdrawals"] = total_withdrawn
+        p["current_balance"] = current_balance
+        p["balance"] = current_balance
+        result.append(p)
+    return result
 
 @api_router.post("/partners")
 async def create_partner(data: dict, user=Depends(get_current_user)):
     data.setdefault("balance", 0)
     r = await db.partners.insert_one(data)
     row = await db.partners.find_one({"_id": r.inserted_id})
-    return serialize_doc(row)
+    p = serialize_doc(row)
+    p["total_investment"] = float(data.get("total_investment", 0))
+    p["total_withdrawals"] = 0.0
+    p["current_balance"] = p["total_investment"]
+    return p
 
 @api_router.put("/partners/{item_id}")
 async def update_partner(item_id: str, data: dict, user=Depends(get_current_user)):
@@ -724,28 +746,38 @@ async def delete_partner(item_id: str, user=Depends(get_current_user)):
     await db.partners.delete_one({"_id": ObjectId(item_id)})
     return {"message": "Deleted"}
 
-@api_router.post("/partners/transaction")
-async def partner_txn(data: dict, user=Depends(get_current_user)):
-    pid = data["partner_id"]
-    amt = float(data["amount"])
-    txn_type = data.get("type", "Investment")
-    date = data.get("date")
+
+# FIX: Route now matches what the frontend calls: POST /api/partners/{id}/transaction
+@api_router.post("/partners/{partner_id}/transaction")
+async def partner_txn(partner_id: str, data: dict, user=Depends(get_current_user)):
+    amt = float(data.get("amount", 0))
+
+    # Accept both "Investment"/"Withdrawal" and "invest"/"withdraw" from frontend
+    raw_type = data.get("type", "Investment")
+    if raw_type in ("invest", "Investment"):
+        txn_type = "Investment"
+    else:
+        txn_type = "Withdrawal"
+
+    date = data.get("date", datetime.now(timezone.utc).strftime("%Y-%m-%d"))
 
     # Update partner balance
     delta = amt if txn_type == "Investment" else -amt
-
     await db.partners.update_one(
-        {"_id": ObjectId(pid)},
+        {"_id": ObjectId(partner_id)},
         {"$inc": {"balance": delta}}
     )
 
-    # Save in partner_transactions
+    # Save in partner_transactions with partner_id as string
     await db.partner_transactions.insert_one({
-        **data,
+        "partner_id": partner_id,
+        "amount": amt,
+        "type": txn_type,
+        "date": date,
         "created_at": datetime.now(timezone.utc)
     })
 
-    # ✅ Save in main transactions
+    # Save in main transactions
     txn = {
         "date": date,
         "amount": amt,
@@ -755,17 +787,25 @@ async def partner_txn(data: dict, user=Depends(get_current_user)):
         "description": f"{txn_type} - Partner",
         "created_at": datetime.now(timezone.utc)
     }
-
     await db.transactions.insert_one(txn)
 
-    # ✅ Update bank balance
-    if txn["mode"] == "Bank":
-        await update_balance(
-            "bank_balance",
-            txn["amount"] if txn["type"] == "Income" else -txn["amount"]
-        )
+    # Update bank balance
+    await update_balance(
+        "bank_balance",
+        amt if txn["type"] == "Income" else -amt
+    )
 
-    return {"message": "Saved"}
+    return {"message": "Saved", "type": txn_type, "amount": amt}
+
+
+# Keep old route for backward compatibility (no-op redirect)
+@api_router.post("/partners/transaction")
+async def partner_txn_legacy(data: dict, user=Depends(get_current_user)):
+    pid = data.get("partner_id")
+    if not pid:
+        raise HTTPException(status_code=400, detail="partner_id required")
+    return await partner_txn(pid, data, user)
+
 
 # =========================
 # INVENTORY
@@ -773,24 +813,114 @@ async def partner_txn(data: dict, user=Depends(get_current_user)):
 
 @api_router.get("/inventory")
 async def get_inventory(user=Depends(get_current_user)):
-    rows = await db.inventory.find().sort("_id", -1).to_list(1000)
-    return [serialize_doc(x) for x in rows]
+    # FIX: Return a computed summary object instead of raw array
+    inv_rows = await db.inventory.find().to_list(1000)
+    purchases = await db.inventory_purchases.find().to_list(10000)
+
+    # Compute per-type stock
+    naturoplast_stock = 0
+    iraniya_stock = 0
+    for row in inv_rows:
+        bt = row.get("bag_type", "")
+        stock = int(row.get("stock", 0))
+        if bt == "Naturoplast":
+            naturoplast_stock = stock
+        elif bt == "Iraniya":
+            iraniya_stock = stock
+
+    # Compute purchased totals from purchase history
+    naturoplast_purchased = sum(
+        int(p.get("bags", p.get("quantity", 0)))
+        for p in purchases if p.get("bag_type") == "Naturoplast"
+    )
+    iraniya_purchased = sum(
+        int(p.get("bags", p.get("quantity", 0)))
+        for p in purchases if p.get("bag_type") == "Iraniya"
+    )
+    total_purchased = naturoplast_purchased + iraniya_purchased
+
+    # Compute used from all project bag_usage_history
+    projects = await db.projects.find().to_list(10000)
+    naturoplast_used = 0
+    iraniya_used = 0
+    for proj in projects:
+        for usage in proj.get("bag_usage_history", []):
+            qty = int(usage.get("quantity", 0))
+            if usage.get("bag_type") == "Naturoplast":
+                naturoplast_used += qty
+            elif usage.get("bag_type") == "Iraniya":
+                iraniya_used += qty
+    total_used = naturoplast_used + iraniya_used
+
+    current_stock = naturoplast_stock + iraniya_stock
+
+    # Build purchase history list for display
+    purchase_history = []
+    for p in sorted(purchases, key=lambda x: x.get("date", ""), reverse=True):
+        purchase_history.append({
+            "date": p.get("date", ""),
+            "bag_type": p.get("bag_type", ""),
+            "bags": int(p.get("bags", p.get("quantity", 0))),
+            "amount": float(p.get("amount", 0)),
+            "mode": p.get("mode", "Bank"),
+        })
+
+    return {
+        "current_stock": current_stock,
+        "naturoplast_stock": naturoplast_stock,
+        "iraniya_stock": iraniya_stock,
+        "naturoplast_purchased": naturoplast_purchased,
+        "iraniya_purchased": iraniya_purchased,
+        "naturoplast_used": naturoplast_used,
+        "iraniya_used": iraniya_used,
+        "total_purchased": total_purchased,
+        "total_used": total_used,
+        "purchase_history": purchase_history,
+    }
 
 @api_router.post("/inventory/purchase")
 async def add_inventory_purchase(data: dict, user=Depends(get_current_user)):
-    qty = int(data.get("quantity", 0))
+    # Accept both "bags" and "quantity" field names
+    qty = int(data.get("bags", data.get("quantity", 0)))
     bag_type = data.get("bag_type", "Naturoplast")
+    amount = float(data.get("amount", 0))
+    mode = data.get("mode", "Bank")
+    date = data.get("date", datetime.now(timezone.utc).strftime("%Y-%m-%d"))
 
+    # Update inventory stock
     await db.inventory.update_one(
         {"bag_type": bag_type},
         {"$inc": {"stock": qty}},
         upsert=True
     )
 
+    # Save purchase record (normalize to use "bags" field)
     await db.inventory_purchases.insert_one({
-        **data,
+        "bags": qty,
+        "quantity": qty,
+        "bag_type": bag_type,
+        "amount": amount,
+        "mode": mode,
+        "date": date,
         "created_at": datetime.now(timezone.utc)
     })
+
+    # Also record as an expense transaction
+    txn = {
+        "date": date,
+        "amount": amount,
+        "type": "Expense",
+        "mode": mode,
+        "category": "Inventory",
+        "description": f"Bag Purchase - {bag_type} ({qty} bags)",
+        "created_at": datetime.now(timezone.utc)
+    }
+    await db.transactions.insert_one(txn)
+
+    if mode == "Bank":
+        await update_balance("bank_balance", -amount)
+    elif mode == "Petty Cash":
+        await update_balance("petty_cash_balance", -amount)
 
     return {"message": "Saved"}
 
@@ -847,8 +977,6 @@ async def auto_backup_scheduler():
 # ======================================================
 
 app.include_router(api_router)
-
-
 
 
 @app.on_event("shutdown")
