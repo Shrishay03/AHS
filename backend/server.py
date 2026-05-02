@@ -729,7 +729,9 @@ async def partner_txn(data: dict, user=Depends(get_current_user)):
     pid = data["partner_id"]
     amt = float(data["amount"])
     txn_type = data.get("type", "Investment")
+    date = data.get("date")
 
+    # Update partner balance
     delta = amt if txn_type == "Investment" else -amt
 
     await db.partners.update_one(
@@ -737,10 +739,31 @@ async def partner_txn(data: dict, user=Depends(get_current_user)):
         {"$inc": {"balance": delta}}
     )
 
+    # Save in partner_transactions
     await db.partner_transactions.insert_one({
         **data,
         "created_at": datetime.now(timezone.utc)
     })
+
+    # ✅ Save in main transactions
+    txn = {
+        "date": date,
+        "amount": amt,
+        "type": "Income" if txn_type == "Investment" else "Expense",
+        "mode": "Bank",
+        "category": "Partner",
+        "description": f"{txn_type} - Partner",
+        "created_at": datetime.now(timezone.utc)
+    }
+
+    await db.transactions.insert_one(txn)
+
+    # ✅ Update bank balance
+    if txn["mode"] == "Bank":
+        await update_balance(
+            "bank_balance",
+            txn["amount"] if txn["type"] == "Income" else -txn["amount"]
+        )
 
     return {"message": "Saved"}
 
