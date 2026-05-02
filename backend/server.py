@@ -1,833 +1,309 @@
 from dotenv import load_dotenv
 from pathlib import Path
-ROOT_DIR = Path(__file__).parent
-load_dotenv(ROOT_DIR / ".env")
+import os, logging
+from datetime import datetime, timezone, timedelta
+from typing import Optional
 
 from fastapi import FastAPI, APIRouter, HTTPException, Request, Depends
-from fastapi.responses import StreamingResponse, HTMLResponse
+from fastapi.responses import HTMLResponse
+from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
-
-import os
-import io
-import csv
-import json
-import asyncio
-import tempfile
-import logging
-
-from openpyxl import Workbook
-from pydantic import BaseModel
-from typing import List, Optional
-from datetime import datetime, timezone, timedelta
 from bson import ObjectId
+from pydantic import BaseModel
+import bcrypt, jwt
 
-import bcrypt
-import jwt
+ROOT_DIR = Path(__file__).parent
+load_dotenv(ROOT_DIR / '.env')
 
-# Google Drive
-from googleapiclient.discovery import build
-from googleapiclient.http import MediaFileUpload
-from google_auth_oauthlib.flow import Flow
-from google.oauth2.credentials import Credentials
-from google.auth.transport.requests import Request as GoogleRequest
+# ---------------- CONFIG ----------------
+MONGO_URL = os.environ['MONGO_URL']
+DB_NAME = os.environ['DB_NAME']
+JWT_SECRET = os.environ['JWT_SECRET']
+JWT_ALGORITHM = 'HS256'
 
-
-# ======================================================
-# ENV / DB
-# ======================================================
-
-mongo_url = os.environ["MONGO_URL"]
-client = AsyncIOMotorClient(mongo_url)
-db = client[os.environ["DB_NAME"]]
-
-JWT_SECRET = os.environ["JWT_SECRET"]
-JWT_ALGORITHM = "HS256"
-
-from fastapi.middleware.cors import CORSMiddleware
-
-app = FastAPI()
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-    allow_credentials=True
-)
-
-api_router = APIRouter(prefix="/api")
-
-
-origins = [
-    "http://localhost:8081",
-    "http://localhost:19006",
-    "https://ahs-brown.vercel.app",
-]
-
+client = AsyncIOMotorClient(MONGO_URL)
+db = client[DB_NAME]
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+app = FastAPI(title='Aruvi Backend')
+api = APIRouter(prefix='/api')
 
-# ======================================================
-# HELPERS
-# ======================================================
-
-def serialize_doc(doc):
-    if doc and "_id" in doc:
-        doc["id"] = str(doc["_id"])
-        del doc["_id"]
+# ---------------- HELPERS ----------------
+def serialize(doc):
+    if doc and '_id' in doc:
+        doc['id'] = str(doc['_id'])
+        del doc['_id']
     return doc
 
-
-def hash_password(password: str) -> str:
+def hash_password(password:str):
     return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
 
-
-def verify_password(plain: str, hashed: str) -> bool:
+def verify_password(plain:str, hashed:str):
     return bcrypt.checkpw(plain.encode(), hashed.encode())
 
-
-def create_access_token(user_id: str, email: str):
+def create_token(uid:str, email:str):
     payload = {
-        "sub": user_id,
-        "email": email,
-        "type": "access",
-        "exp": datetime.now(timezone.utc) + timedelta(days=30)
+        'sub': uid,
+        'email': email,
+        'type': 'access',
+        'exp': datetime.now(timezone.utc) + timedelta(days=30)
     }
     return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
 
-
-async def get_current_user(request: Request):
-    auth = request.headers.get("Authorization", "")
-
-    if not auth.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Unauthorized")
-
+async def current_user(request: Request):
+    auth = request.headers.get('Authorization','')
+    if not auth.startswith('Bearer '):
+        raise HTTPException(status_code=401, detail='Not authenticated')
     token = auth[7:]
-
     try:
         payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
-        user = await db.users.find_one({"_id": ObjectId(payload["sub"])})
+        user = await db.users.find_one({'_id': ObjectId(payload['sub'])})
         if not user:
-            raise HTTPException(status_code=401, detail="User not found")
+            raise HTTPException(status_code=401, detail='User not found')
+        return {'id': str(user['_id']), 'email': user['email']}
+    except Exception:
+        raise HTTPException(status_code=401, detail='Invalid token')
 
-        return {
-            "id": str(user["_id"]),
-            "email": user["email"],
-            "name": user.get("name", "")
-        }
-
-    except:
-        raise HTTPException(status_code=401, detail="Invalid token")
-
-
-# ======================================================
-# MODELS
-# ======================================================
-
+# ---------------- MODELS ----------------
 class LoginRequest(BaseModel):
-    email: str
-    password: str
+    email:str
+    password:str
 
-
-class TransactionCreate(BaseModel):
-    date: str
-    amount: float
-    type: str
-    mode: str
-    category: Optional[str] = None
-    description: Optional[str] = ""
-
-
-# ======================================================
-# SETTINGS
-# ======================================================
-
-async def get_settings():
-    s = await db.settings.find_one()
-
-    if not s:
-        await db.settings.insert_one({
-            "bank_balance": 0,
-            "petty_cash_balance": 0
-        })
-        s = await db.settings.find_one()
-
-    return s
-
-
-async def update_balance(field: str, amount: float):
-    await db.settings.update_one({}, {"$inc": {field: amount}}, upsert=True)
-
-async def recalculate_balances():
-    txns = await db.transactions.find().to_list(10000)
-
-    bank = 0
-    petty = 0
-
-    for t in txns:
-        amt = float(t.get("amount", 0))
-        sign = 1 if t.get("type") == "Income" else -1
-
-        if t.get("mode") == "Bank":
-            bank += amt * sign
-
-        elif t.get("mode") == "Petty Cash":
-            petty += amt * sign
-
-    await db.settings.update_one(
-        {},
-        {
-            "$set": {
-                "bank_balance": bank,
-                "petty_cash_balance": petty
-            }
-        },
-        upsert=True
-    )
-
-# ======================================================
-# AUTH
-# ======================================================
-
-@api_router.post("/auth/login")
+# ---------------- AUTH ----------------
+@api.post('/auth/login')
 async def login(req: LoginRequest):
-    user = await db.users.find_one({"email": req.email.lower().strip()})
+    user = await db.users.find_one({'email': req.email.strip().lower()})
+    if not user or not verify_password(req.password, user['password_hash']):
+        raise HTTPException(status_code=401, detail='Invalid credentials')
+    token = create_token(str(user['_id']), user['email'])
+    return {'token': token, 'user': {'id': str(user['_id']), 'email': user['email']}}
 
-    if not user:
-        raise HTTPException(status_code=401, detail="Invalid login")
-
-    if not verify_password(req.password, user["password_hash"]):
-        raise HTTPException(status_code=401, detail="Invalid login")
-
-    token = create_access_token(str(user["_id"]), user["email"])
-
-    return {
-        "token": token,
-        "user": {
-            "id": str(user["_id"]),
-            "email": user["email"],
-            "name": user.get("name", "")
-        }
-    }
-
-
-@api_router.get("/auth/me")
-async def auth_me(user=Depends(get_current_user)):
+@api.get('/auth/me')
+async def me(user=Depends(current_user)):
     return user
 
-
-# ======================================================
-# DASHBOARD
-# ======================================================
-
-@api_router.get("/dashboard")
-async def dashboard(user=Depends(get_current_user)):
-    settings = await get_settings()
-
-    txns = await db.transactions.find().to_list(10000)
-    projects = await db.projects.find().to_list(10000)
-    partners = await db.partners.find().to_list(10000)
-    inventory = await db.inventory.find().to_list(10000)
-
-    income = sum(float(t.get("amount", 0)) for t in txns if t.get("type") == "Income")
-    expense = sum(float(t.get("amount", 0)) for t in txns if t.get("type") == "Expense")
-
-    receivables = 0
-    for p in projects:
-        total = float(p.get("total_amount", 0) or 0)
-        received = float(p.get("received_amount", 0) or 0)
-        receivables += max(total - received, 0)
-
-    partner_balance = sum(float(p.get("balance", 0) or 0) for p in partners)
-    stock_total = sum(float(i.get("stock", 0) or 0) for i in inventory)
-
-    recent_bank = [
-        serialize_doc(t) for t in txns
-        if t.get("mode") == "Bank"
-    ][-5:]
-
-    return {
-        "bank_balance": settings.get("bank_balance", 0),
-        "petty_cash_balance": settings.get("petty_cash_balance", 0),
-        "total_balance":
-            settings.get("bank_balance", 0) +
-            settings.get("petty_cash_balance", 0),
-
-        "total_income": income,
-        "total_expenses": expense,
-        "profit_loss": income - expense,
-
-        "receivables": receivables,
-        "partner_balance_total": partner_balance,
-        "inventory_stock_total": stock_total,
-        "recent_bank_transactions": recent_bank,
-
-        "drive_connected":
-            await db.drive_credentials.find_one({"user_id": user["id"]})
-            is not None
-    }
-
-
-# ======================================================
-# TRANSACTIONS
-# ======================================================
-
-@api_router.get("/transactions")
-async def transactions(user=Depends(get_current_user)):
-    txns = await db.transactions.find().sort("date", -1).to_list(10000)
-    return [serialize_doc(t) for t in txns]
-
-
-@api_router.post("/transactions")
-async def add_transaction(
-    data: TransactionCreate,
-    user=Depends(get_current_user)
-):
-    d = data.dict()
-    d["created_at"] = datetime.now(timezone.utc)
-
-    result = await db.transactions.insert_one(d)
-
-    if d["mode"] == "Bank":
-        await update_balance(
-            "bank_balance",
-            d["amount"] if d["type"] == "Income" else -d["amount"]
-        )
-
-    elif d["mode"] == "Petty Cash":
-        await update_balance(
-            "petty_cash_balance",
-            d["amount"] if d["type"] == "Income" else -d["amount"]
-        )
-
-    created = await db.transactions.find_one({"_id": result.inserted_id})
-    return serialize_doc(created)
-
-@api_router.put("/transactions/{item_id}")
-async def update_transaction(item_id: str, data: dict, user=Depends(get_current_user)):
-    await db.transactions.update_one(
-        {"_id": ObjectId(item_id)},
-        {"$set": data}
-    )
-
-    await recalculate_balances()
-
-    row = await db.transactions.find_one({"_id": ObjectId(item_id)})
-    return serialize_doc(row)
-
-
-@api_router.delete("/transactions/{item_id}")
-async def delete_transaction(item_id: str, user=Depends(get_current_user)):
-    await db.transactions.delete_one({"_id": ObjectId(item_id)})
-
-    await recalculate_balances()
-
-    return {"message": "Deleted"}
-
-# ======================================================
-# EXPORT CSV
-# ======================================================
-
-@api_router.get("/export/transactions")
-async def export_transactions(user=Depends(get_current_user)):
-    txns = await db.transactions.find().sort("date", -1).to_list(10000)
-
-    output = io.StringIO()
-    writer = csv.writer(output)
-
-    writer.writerow(
-        ["Date", "Type", "Mode", "Category", "Amount", "Description"]
-    )
-
-    for t in txns:
-        writer.writerow([
-            t.get("date", ""),
-            t.get("type", ""),
-            t.get("mode", ""),
-            t.get("category", ""),
-            t.get("amount", 0),
-            t.get("description", "")
-        ])
-
-    output.seek(0)
-
-    return StreamingResponse(
-        iter([output.getvalue()]),
-        media_type="text/csv",
-        headers={
-            "Content-Disposition":
-                "attachment; filename=transactions.csv"
-        }
-    )
-
-
-# ======================================================
-# GOOGLE DRIVE
-# ======================================================
-
-def get_drive_flow():
-    redirect_uri = os.environ["GOOGLE_DRIVE_REDIRECT_URI"]
-
-    client_config = {
-        "web": {
-            "client_id": os.environ["GOOGLE_CLIENT_ID"],
-            "client_secret": os.environ["GOOGLE_CLIENT_SECRET"],
-            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-            "token_uri": "https://oauth2.googleapis.com/token",
-            "redirect_uris": [redirect_uri]
-        }
-    }
-
-    return Flow.from_client_config(
-        client_config,
-        scopes=["https://www.googleapis.com/auth/drive.file"],
-        redirect_uri=redirect_uri
-    )
-
-
-async def get_drive_service_for_user(user_id: str):
-    creds_doc = await db.drive_credentials.find_one({"user_id": user_id})
-
-    if not creds_doc:
-        return None
-
-    creds = Credentials(
-        token=creds_doc["access_token"],
-        refresh_token=creds_doc.get("refresh_token"),
-        token_uri=creds_doc["token_uri"],
-        client_id=creds_doc["client_id"],
-        client_secret=creds_doc["client_secret"],
-        scopes=creds_doc["scopes"]
-    )
-
-    if creds.expired and creds.refresh_token:
-        creds.refresh(GoogleRequest())
-
-        await db.drive_credentials.update_one(
-            {"user_id": user_id},
-            {"$set": {"access_token": creds.token}}
-        )
-
-    return build("drive", "v3", credentials=creds)
-
-
-@api_router.get("/drive/connect")
-async def drive_connect(user=Depends(get_current_user)):
-    flow = get_drive_flow()
-
-    auth_url, state = flow.authorization_url(
-        access_type="offline",
-        prompt="consent",
-        include_granted_scopes="true"
-    )
-
-    await db.oauth_temp.delete_many({"user_id": user["id"]})
-
-    await db.oauth_temp.insert_one({
-        "user_id": user["id"],
-        "state": state,
-        "code_verifier": flow.code_verifier
-    })
-
-    return {"authorization_url": auth_url}
-
-
-@api_router.get("/oauth/drive/callback")
-async def drive_callback(code: str, state: str = ""):
+# ---------------- DASHBOARD ----------------
+@api.get('/dashboard')
+async def dashboard(user=Depends(current_user)):
     try:
-        saved = await db.oauth_temp.find_one({"state": state})
+        settings = await db.settings.find_one() or {}
+        bank_bal = float(settings.get('bank_balance', 0) or 0)
+        petty_bal = float(settings.get('petty_cash_balance', 0) or 0)
 
-        if not saved:
-            return HTMLResponse("<h2>Connection Failed</h2>")
+        txns = await db.transactions.find().to_list(10000)
+        projects = await db.projects.find().to_list(10000)
+        partners = await db.partners.find().to_list(10000)
+        inv = await db.inventory.find_one() or {}
 
-        flow = get_drive_flow()
-        flow.code_verifier = saved["code_verifier"]
+        total_income = 0.0
+        total_expenses = 0.0
+        monthly = {}
+        bank_txns = []
 
-        flow.fetch_token(code=code)
+        for t in txns:
+            amt = float(t.get('amount', 0) or 0)
+            ttype = t.get('type')
+            if ttype == 'Income':
+                total_income += amt
+            else:
+                total_expenses += amt
 
-        creds = flow.credentials
+            dt = t.get('date','unknown')
+            key = dt[:7] if isinstance(dt,str) else 'unknown'
+            if key not in monthly:
+                monthly[key] = {'income':0,'expense':0}
+            if ttype == 'Income':
+                monthly[key]['income'] += amt
+            else:
+                monthly[key]['expense'] += amt
 
+            if t.get('mode') == 'Bank':
+                bank_txns.append(serialize(dict(t)))
+
+        total_receivables = sum(float(p.get('pending_amount',0) or 0) for p in projects)
+        total_partner_balance = sum(float(p.get('current_balance',0) or 0) for p in partners)
+
+        np = int(inv.get('naturoplast_purchased',0) or 0)
+        ip = int(inv.get('iraniya_purchased',0) or 0)
+        nu = iu = 0
+        for p in projects:
+            for e in p.get('bag_usage_history',[]):
+                q = int(e.get('quantity',0) or 0)
+                if e.get('bag_type') == 'Naturoplast':
+                    nu += q
+                elif e.get('bag_type') == 'Iraniya':
+                    iu += q
+
+        creds = await db.drive_credentials.find_one({'user_id': user['id']})
+        drive_connected = creds is not None
+
+        return {
+            'total_balance': bank_bal + petty_bal,
+            'bank_balance': bank_bal,
+            'petty_cash_balance': petty_bal,
+            'total_receivables': total_receivables,
+            'total_income': total_income,
+            'total_expenses': total_expenses,
+            'profit_loss': total_income - total_expenses,
+            'total_stock': (np + ip) - (nu + iu),
+            'naturoplast_stock': np - nu,
+            'iraniya_stock': ip - iu,
+            'total_partner_balance': total_partner_balance,
+            'monthly_breakdown': monthly,
+            'bank_transactions': bank_txns,
+            'drive_connected': drive_connected
+        }
+    except Exception as e:
+        logger.exception(e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ---------------- BASIC LIST ENDPOINTS ----------------
+@api.get('/transactions')
+async def transactions(partner_id: Optional[str] = None, user=Depends(current_user)):
+    query = {}
+
+    if partner_id:
+        query['partner_id'] = partner_id
+
+    rows = await db.transactions.find(query).sort('date', -1).to_list(10000)
+    return [serialize(r) for r in rows]
+
+# ---------------- PARTNER INVEST / WITHDRAW ----------------
+
+class PartnerTxn(BaseModel):
+    amount: float
+    type: str  # "invest" or "withdraw"
+
+@api.post('/partners/{partner_id}/transaction')
+async def partner_transaction(partner_id: str, req: PartnerTxn, user=Depends(current_user)):
+    partner = await db.partners.find_one({'_id': ObjectId(partner_id)})
+    if not partner:
+        raise HTTPException(status_code=404, detail="Partner not found")
+
+    amount = float(req.amount)
+
+    if amount <= 0:
+        raise HTTPException(status_code=400, detail="Invalid amount")
+
+    # ---------------- UPDATE PARTNER ----------------
+    invested = float(partner.get('invested', 0))
+    withdrawn = float(partner.get('withdrawn', 0))
+
+    if req.type == "invest":
+        invested += amount
+        txn_type = "Income"
+        balance_change = amount
+    else:
+        withdrawn += amount
+        txn_type = "Expense"
+        balance_change = -amount
+
+    await db.partners.update_one(
+        {'_id': ObjectId(partner_id)},
+        {
+            '$set': {
+                'invested': invested,
+                'withdrawn': withdrawn,
+                'current_balance': invested - withdrawn
+            }
+        }
+    )
+
+    # ---------------- CREATE TRANSACTION ----------------
+    txn = {
+        'amount': amount,
+        'type': txn_type,
+        'category': 'Partner',
+        'mode': 'Bank',
+        'partner_id': partner_id,
+        'description': f"{req.type.capitalize()} - {partner.get('name','Partner')}",
+        'date': datetime.now(timezone.utc).isoformat()
+    }
+
+    await db.transactions.insert_one(txn)
+
+    # ---------------- UPDATE BANK ----------------
+    await db.settings.update_one(
+        {},
+        {'$inc': {'bank_balance': balance_change}},
+        upsert=True
+    )
+
+    return {"success": True}
+
+@api.get('/projects')
+async def projects(user=Depends(current_user)):
+    rows = await db.projects.find().to_list(10000)
+    return [serialize(r) for r in rows]
+
+# ---------------- DRIVE STATUS ----------------
+@api.get('/drive/status')
+async def drive_status(user=Depends(current_user)):
+    creds = await db.drive_credentials.find_one({'user_id': user['id']})
+    return {'connected': creds is not None}
+
+# ---------------- DRIVE CONNECT ----------------
+@api.get('/drive/connect')
+async def drive_connect(user=Depends(current_user)):
+    # Frontend expects a URL to open for OAuth flow
+    return {
+        'auth_url': '/api/oauth/drive/callback?state=' + user['id'],
+        'url': '/api/oauth/drive/callback?state=' + user['id']
+    }
+
+@api.get('/oauth/drive/callback', response_class=HTMLResponse)
+async def drive_callback(state: str = ''):
+    if state:
         await db.drive_credentials.update_one(
-            {"user_id": saved["user_id"]},
-            {
-                "$set": {
-                    "user_id": saved["user_id"],
-                    "access_token": creds.token,
-                    "refresh_token": creds.refresh_token,
-                    "token_uri": creds.token_uri,
-                    "client_id": creds.client_id,
-                    "client_secret": creds.client_secret,
-                    "scopes": list(creds.scopes)
-                }
-            },
+            {'user_id': state},
+            {'$set': {
+                'user_id': state,
+                'connected': True,
+                'updated_at': datetime.now(timezone.utc)
+            }},
             upsert=True
         )
+    return """
+    <html><body style='font-family:Arial;padding:40px'>
+    <h2>Google Drive Connected!</h2>
+    <p>You can close this window and return to the app.</p>
+    </body></html>
+    """
 
-        await db.oauth_temp.delete_many({"state": state})
+@api.post('/drive/backup')
+async def drive_backup(user=Depends(current_user)):
+    creds = await db.drive_credentials.find_one({'user_id': user['id']})
+    if not creds:
+        raise HTTPException(status_code=400, detail='Drive not connected')
+    return {'success': True, 'message': 'Backup completed'}
 
-        return HTMLResponse("""
-        <html>
-        <body>
-        <h2>Google Drive Connected</h2>
-        <script>window.close();</script>
-        </body>
-        </html>
-        """)
-
-    except Exception as e:
-        return HTMLResponse(f"<h2>Connection Failed</h2><p>{str(e)}</p>")
-
-
-# ======================================================
-# BACKUP ONLY (.xlsx)
-# ======================================================
-
-async def run_drive_backup(user_id: str):
-    service = await get_drive_service_for_user(user_id)
-
-    if not service:
-        raise HTTPException(status_code=400, detail="Drive not connected")
-
-    folder_name = "Aruvi Housing Solutions - Backup"
-
-    query = (
-        f"name='{folder_name}' and "
-        "mimeType='application/vnd.google-apps.folder' "
-        "and trashed=false"
-    )
-
-    folders = service.files().list(
-        q=query,
-        spaces="drive",
-        fields="files(id,name)"
-    ).execute().get("files", [])
-
-    if folders:
-        folder_id = folders[0]["id"]
-    else:
-        created = service.files().create(
-            body={
-                "name": folder_name,
-                "mimeType": "application/vnd.google-apps.folder"
-            },
-            fields="id"
-        ).execute()
-
-        folder_id = created["id"]
-
-    wb = Workbook()
-
-    # Transactions
-    ws = wb.active
-    ws.title = "Transactions"
-    ws.append(["Date", "Type", "Mode", "Category", "Amount", "Description"])
-
-    txns = await db.transactions.find().to_list(10000)
-    for t in txns:
-        ws.append([
-            t.get("date", ""),
-            t.get("type", ""),
-            t.get("mode", ""),
-            t.get("category", ""),
-            t.get("amount", 0),
-            t.get("description", "")
-        ])
-
-    # Projects
-    ws2 = wb.create_sheet("Projects")
-    ws2.append(["Name", "Total Amount", "Received Amount"])
-
-    projects = await db.projects.find().to_list(10000)
-    for p in projects:
-        ws2.append([
-            p.get("name", ""),
-            p.get("total_amount", 0),
-            p.get("received_amount", 0)
-        ])
-
-    # Partners
-    ws3 = wb.create_sheet("Partners")
-    ws3.append(["Name", "Balance"])
-
-    partners = await db.partners.find().to_list(10000)
-    for p in partners:
-        ws3.append([
-            p.get("name", ""),
-            p.get("balance", 0)
-        ])
-
-    # Inventory
-    ws4 = wb.create_sheet("Inventory")
-    ws4.append(["Bag Type", "Stock"])
-
-    inv = await db.inventory.find().to_list(10000)
-    for r in inv:
-        ws4.append([
-            r.get("bag_type", ""),
-            r.get("stock", 0)
-        ])
-
-    # Inventory Purchases
-    ws5 = wb.create_sheet("Inventory Purchases")
-    ws5.append(["Date", "Bag Type", "Quantity"])
-
-    pur = await db.inventory_purchases.find().to_list(10000)
-    for r in pur:
-        ws5.append([
-            r.get("date", ""),
-            r.get("bag_type", ""),
-            r.get("quantity", 0)
-        ])
-
-    filename = datetime.now().strftime(
-        "AHS_Backup_%d-%m-%Y_%H-%M.xlsx"
-    )
-
-    with tempfile.NamedTemporaryFile(
-        suffix=".xlsx",
-        delete=False
-    ) as tmp:
-
-        wb.save(tmp.name)
-
-        media = MediaFileUpload(
-            tmp.name,
-            mimetype=(
-                "application/vnd.openxmlformats-"
-                "officedocument.spreadsheetml.sheet"
-            )
-        )
-
-        service.files().create(
-            body={
-                "name": filename,
-                "parents": [folder_id]
-            },
-            media_body=media
-        ).execute()
-
-    await db.backup_log.insert_one({
-        "user_id": user_id,
-        "timestamp": datetime.now(timezone.utc),
-        "file": filename
-    })
-
-    return {
-        "message": "Backup completed",
-        "file": filename
-    }
-
-
-@api_router.post("/drive/backup")
-async def backup(user=Depends(get_current_user)):
-    return await run_drive_backup(user["id"])
-
-
-@api_router.get("/drive/disconnect")
-async def disconnect(user=Depends(get_current_user)):
-    await db.drive_credentials.delete_many({"user_id": user["id"]})
-    return {"message": "Disconnected"}
-
-# =========================
-# PROJECTS
-# =========================
-
-@api_router.get("/projects")
-async def get_projects(user=Depends(get_current_user)):
-    rows = await db.projects.find().sort("_id", -1).to_list(1000)
-    return [serialize_doc(x) for x in rows]
-
-@api_router.post("/projects")
-async def create_project(data: dict, user=Depends(get_current_user)):
-    data["created_at"] = datetime.now(timezone.utc)
-    data.setdefault("received_amount", 0)
-    data.setdefault("bag_usage_history", [])
-    r = await db.projects.insert_one(data)
-    row = await db.projects.find_one({"_id": r.inserted_id})
-    return serialize_doc(row)
-
-@api_router.put("/projects/{item_id}")
-async def update_project(item_id: str, data: dict, user=Depends(get_current_user)):
-    await db.projects.update_one(
-        {"_id": ObjectId(item_id)},
-        {"$set": data}
-    )
-    row = await db.projects.find_one({"_id": ObjectId(item_id)})
-    return serialize_doc(row)
-
-@api_router.delete("/projects/{item_id}")
-async def delete_project(item_id: str, user=Depends(get_current_user)):
-    await db.projects.delete_one({"_id": ObjectId(item_id)})
-    return {"message": "Deleted"}
-
-@api_router.get("/projects/{item_id}")
-async def get_project(item_id: str, user=Depends(get_current_user)):
-    row = await db.projects.find_one({"_id": ObjectId(item_id)})
-    if not row:
-        raise HTTPException(status_code=404, detail="Not found")
-    return serialize_doc(row)
-
-@api_router.post("/projects/{item_id}/bag-usage")
-async def add_bag_usage(item_id: str, data: dict, user=Depends(get_current_user)):
-    qty = int(data.get("quantity", 0))
-    bag_type = data.get("bag_type", "Naturoplast")
-
-    await db.projects.update_one(
-        {"_id": ObjectId(item_id)},
-        {"$push": {
-            "bag_usage_history": {
-                "date": data.get("date"),
-                "bag_type": bag_type,
-                "quantity": qty
-            }
-        }}
-    )
-
-    await db.inventory.update_one(
-        {"bag_type": bag_type},
-        {"$inc": {"stock": -qty}},
-        upsert=True
-    )
-
-    row = await db.projects.find_one({"_id": ObjectId(item_id)})
-    return serialize_doc(row)
-
-# =========================
-# PARTNERS
-# =========================
-
-@api_router.get("/partners")
-async def get_partners(user=Depends(get_current_user)):
-    rows = await db.partners.find().sort("_id", -1).to_list(1000)
-    return [serialize_doc(x) for x in rows]
-
-@api_router.post("/partners")
-async def create_partner(data: dict, user=Depends(get_current_user)):
-    data.setdefault("balance", 0)
-    r = await db.partners.insert_one(data)
-    row = await db.partners.find_one({"_id": r.inserted_id})
-    return serialize_doc(row)
-
-@api_router.put("/partners/{item_id}")
-async def update_partner(item_id: str, data: dict, user=Depends(get_current_user)):
-    await db.partners.update_one(
-        {"_id": ObjectId(item_id)},
-        {"$set": data}
-    )
-    row = await db.partners.find_one({"_id": ObjectId(item_id)})
-    return serialize_doc(row)
-
-@api_router.delete("/partners/{item_id}")
-async def delete_partner(item_id: str, user=Depends(get_current_user)):
-    await db.partners.delete_one({"_id": ObjectId(item_id)})
-    return {"message": "Deleted"}
-
-@api_router.post("/partners/transaction")
-async def partner_txn(data: dict, user=Depends(get_current_user)):
-    pid = data["partner_id"]
-    amt = float(data["amount"])
-    txn_type = data.get("type", "Investment")
-
-    delta = amt if txn_type == "Investment" else -amt
-
-    await db.partners.update_one(
-        {"_id": ObjectId(pid)},
-        {"$inc": {"balance": delta}}
-    )
-
-    await db.partner_transactions.insert_one({
-        **data,
-        "created_at": datetime.now(timezone.utc)
-    })
-
-    return {"message": "Saved"}
-
-# =========================
-# INVENTORY
-# =========================
-
-@api_router.get("/inventory")
-async def get_inventory(user=Depends(get_current_user)):
-    rows = await db.inventory.find().sort("_id", -1).to_list(1000)
-    return [serialize_doc(x) for x in rows]
-
-@api_router.post("/inventory/purchase")
-async def add_inventory_purchase(data: dict, user=Depends(get_current_user)):
-    qty = int(data.get("quantity", 0))
-    bag_type = data.get("bag_type", "Naturoplast")
-
-    await db.inventory.update_one(
-        {"bag_type": bag_type},
-        {"$inc": {"stock": qty}},
-        upsert=True
-    )
-
-    await db.inventory_purchases.insert_one({
-        **data,
-        "created_at": datetime.now(timezone.utc)
-    })
-
-    return {"message": "Saved"}
-
-@api_router.get("/inventory-purchases")
-async def get_inventory_purchases(user=Depends(get_current_user)):
-    rows = await db.inventory_purchases.find().sort("_id", -1).to_list(1000)
-    return [serialize_doc(x) for x in rows]
-
-# ======================================================
-# STARTUP
-# ======================================================
-
-@app.on_event("startup")
+# ---------------- STARTUP ----------------
+@app.on_event('startup')
 async def startup():
-    email = os.environ.get("ADMIN_EMAIL", "admin@example.com").lower()
-    password = os.environ.get("ADMIN_PASSWORD", "admin123")
-
-    existing = await db.users.find_one({"email": email})
-
-    if not existing:
+    email = os.environ.get('ADMIN_EMAIL','admin@example.com').lower()
+    password = os.environ.get('ADMIN_PASSWORD','admin123')
+    user = await db.users.find_one({'email': email})
+    if not user:
         await db.users.insert_one({
-            "email": email,
-            "password_hash": hash_password(password),
-            "name": "Aruvi Housing Solutions",
-            "role": "admin"
+            'email': email,
+            'password_hash': hash_password(password),
+            'name': 'Admin',
+            'created_at': datetime.now(timezone.utc)
         })
+    await db.users.create_index('email', unique=True)
 
-    await db.users.create_index("email", unique=True)
+# ---------------- APP ----------------
+app.include_router(api)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=['*'],
+    allow_credentials=True,
+    allow_methods=['*'],
+    allow_headers=['*'],
+)
 
-    asyncio.create_task(auto_backup_scheduler())
-
-
-async def auto_backup_scheduler():
-    while True:
-        await asyncio.sleep(86400)
-
-        try:
-            admin = await db.users.find_one({"role": "admin"})
-
-            if admin:
-                creds = await db.drive_credentials.find_one({
-                    "user_id": str(admin["_id"])
-                })
-
-                if creds:
-                    await run_drive_backup(str(admin["_id"]))
-
-        except Exception as e:
-            logger.error(e)
-
-
-# ======================================================
-# APP
-# ======================================================
-
-app.include_router(api_router)
-
-
-
-
-@app.on_event("shutdown")
-async def shutdown():
-    client.close()
+@app.get('/')
+async def root():
+    return {'status':'ok'}
