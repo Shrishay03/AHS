@@ -69,36 +69,40 @@ export default function Partners() {
   };
 
   const handleAddTxn = async () => {
-  if (!txnData.amount) {
-    Alert.alert('Error', 'Enter amount');
-    return;
-  }
-
-  try {
-    const r = await apiFetch(`/api/partners/${selectedPartner.id}/transaction`, {
-      method: 'POST',
-      body: JSON.stringify({
-        amount: parseFloat(txnData.amount),
-        type: txnData.type === 'Investment' ? 'invest' : 'withdraw'
-      }),
-    });
-
-    if (r.ok) {
-      setTxnModalVisible(false);
-      fetchPartners();
-
-      Alert.alert(
-        'Success',
-        `${txnData.type} of ₹${parseFloat(txnData.amount).toLocaleString()} recorded`
-      );
-    } else {
-      Alert.alert('Error', 'Failed to save transaction');
+    if (!txnData.amount) {
+      Alert.alert('Error', 'Enter amount');
+      return;
     }
 
-  } catch (e) {
-    Alert.alert('Error', 'Something went wrong');
-  }
-};
+    try {
+      // FIX: Route is /api/partners/{id}/transaction
+      // FIX: Send type as "Investment" or "Withdrawal" (matching backend expectation)
+      const r = await apiFetch(`/api/partners/${selectedPartner.id}/transaction`, {
+        method: 'POST',
+        body: JSON.stringify({
+          amount: parseFloat(txnData.amount),
+          type: txnData.type,   // "Investment" or "Withdrawal"
+          date: txnData.date,
+        }),
+      });
+
+      if (r.ok) {
+        setTxnModalVisible(false);
+        fetchPartners();
+        Alert.alert(
+          'Success',
+          `${txnData.type} of ₹${parseFloat(txnData.amount).toLocaleString('en-IN')} recorded`
+        );
+      } else {
+        const errBody = await r.text();
+        console.error('Partner txn error:', r.status, errBody);
+        Alert.alert('Error', 'Failed to save transaction');
+      }
+    } catch (e) {
+      console.error(e);
+      Alert.alert('Error', 'Something went wrong');
+    }
+  };
 
   if (loading) return <View style={s.center}><ActivityIndicator size="large" color={T.primary} /></View>;
 
@@ -121,8 +125,9 @@ export default function Partners() {
                   </View>
                   <View style={{ flex: 1 }}>
                     <Text style={{ fontSize: 16, fontWeight: 'bold', color: T.text }}>{p.name}</Text>
-                    <Text style={{ fontSize: 14, fontWeight: '600', color: p.current_balance >= 0 ? T.ok : T.err }}>
-                      Balance: {fmt(p.current_balance)}
+                    {/* FIX: use current_balance (returned by fixed backend) */}
+                    <Text style={{ fontSize: 14, fontWeight: '600', color: (p.current_balance ?? p.balance ?? 0) >= 0 ? T.ok : T.err }}>
+                      Balance: {fmt(p.current_balance ?? p.balance ?? 0)}
                     </Text>
                   </View>
                   <Ionicons name={expandedId === p.id ? 'chevron-up' : 'chevron-down'} size={22} color={T.muted} />
@@ -132,26 +137,28 @@ export default function Partners() {
               <View style={{ flexDirection: 'row', gap: 12, marginBottom: 12 }}>
                 <View style={{ flex: 1, backgroundColor: '#E8F5E9', borderRadius: 8, padding: 10 }}>
                   <Text style={{ fontSize: 11, color: T.muted }}>Invested</Text>
-                  <Text style={{ fontSize: 15, fontWeight: 'bold', color: T.ok }}>{fmt(p.total_investment)}</Text>
+                  {/* FIX: use total_investment (returned by fixed backend) */}
+                  <Text style={{ fontSize: 15, fontWeight: 'bold', color: T.ok }}>{fmt(p.total_investment ?? 0)}</Text>
                 </View>
                 <View style={{ flex: 1, backgroundColor: '#FFEBEE', borderRadius: 8, padding: 10 }}>
                   <Text style={{ fontSize: 11, color: T.muted }}>Withdrawn</Text>
-                  <Text style={{ fontSize: 15, fontWeight: 'bold', color: T.err }}>{fmt(p.total_withdrawals)}</Text>
+                  {/* FIX: use total_withdrawals (returned by fixed backend) */}
+                  <Text style={{ fontSize: 15, fontWeight: 'bold', color: T.err }}>{fmt(p.total_withdrawals ?? 0)}</Text>
                 </View>
               </View>
 
               {/* Transaction History (Expandable) */}
               {expandedId === p.id && (
-              <View style={{ marginBottom: 12, backgroundColor: T.bg, borderRadius: 8, padding: 12 }}>
-                <Text style={{ fontSize: 13, fontWeight: 'bold', color: T.text, marginBottom: 8 }}>
-                  Transaction History
-                </Text>
-                
-                <Text style={{ fontSize: 12, color: T.muted }}>
-                  Transactions are recorded successfully. View them in the Transactions tab.
-                </Text>
-              </View>
-            )}
+                <View style={{ marginBottom: 12, backgroundColor: T.bg, borderRadius: 8, padding: 12 }}>
+                  <Text style={{ fontSize: 13, fontWeight: 'bold', color: T.text, marginBottom: 8 }}>
+                    Transaction History
+                  </Text>
+                  <Text style={{ fontSize: 12, color: T.muted }}>
+                    Transactions are recorded successfully. View them in the Transactions tab.
+                  </Text>
+                </View>
+              )}
+
               <View style={{ flexDirection: 'row', gap: 8 }}>
                 <TouchableOpacity testID={`add-partner-txn-${p.id}`} style={[s.actBtn, { flex: 2, backgroundColor: '#E8F5E9' }]} onPress={() => openTxnModal(p)}>
                   <Ionicons name="cash-outline" size={16} color={T.primary} />
