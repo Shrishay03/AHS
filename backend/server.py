@@ -845,6 +845,9 @@ async def get_inventory(user=Depends(get_current_user)):
     iraniya_used = 0
     for proj in projects:
         for usage in proj.get("bag_usage_history", []):
+            # Guard against corrupted string entries in bag_usage_history
+            if not isinstance(usage, dict):
+                continue
             qty = int(usage.get("quantity", 0))
             if usage.get("bag_type") == "Naturoplast":
                 naturoplast_used += qty
