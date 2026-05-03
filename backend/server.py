@@ -861,6 +861,7 @@ async def get_inventory(user=Depends(get_current_user)):
     purchase_history = []
     for p in sorted(purchases, key=lambda x: x.get("date", ""), reverse=True):
         purchase_history.append({
+            "id": str(p["_id"]),          # <-- THIS LINE IS THE KEY ADDITION
             "date": p.get("date", ""),
             "bag_type": p.get("bag_type", ""),
             "bags": int(p.get("bags", p.get("quantity", 0))),
@@ -931,6 +932,47 @@ async def add_inventory_purchase(data: dict, user=Depends(get_current_user)):
 async def get_inventory_purchases(user=Depends(get_current_user)):
     rows = await db.inventory_purchases.find().sort("_id", -1).to_list(1000)
     return [serialize_doc(x) for x in rows]
+
+# =======================================================
+# ADD THIS BLOCK to server.py
+# Paste it right after the existing @api_router.post("/inventory/purchase") block
+# =======================================================
+
+@api_router.delete("/inventory/purchase/{purchase_id}")
+async def delete_inventory_purchase(purchase_id: str, user=Depends(get_current_user)):
+    # Find the purchase record first
+    purchase = await db.inventory_purchases.find_one({"_id": ObjectId(purchase_id)})
+    if not purchase:
+        raise HTTPException(status_code=404, detail="Purchase not found")
+
+    qty = int(purchase.get("bags", purchase.get("quantity", 0)))
+    bag_type = purchase.get("bag_type", "Naturoplast")
+    amount = float(purchase.get("amount", 0))
+    mode = purchase.get("mode", "Bank")
+
+    # Deduct from inventory stock
+    await db.inventory.update_one(
+        {"bag_type": bag_type},
+        {"$inc": {"stock": -qty}}
+    )
+
+    # Delete the purchase record
+    await db.inventory_purchases.delete_one({"_id": ObjectId(purchase_id)})
+
+    # Also reverse the expense transaction if it exists
+    # (find by description match and amount - best effort)
+    await db.transactions.delete_one({
+        "category": "Inventory",
+        "amount": amount,
+        "mode": mode,
+        "description": f"Bag Purchase - {bag_type} ({qty} bags)"
+    })
+
+    # Recalculate bank/petty cash balances
+    await recalculate_balances()
+
+    return {"message": "Purchase deleted and stock updated"}
+
 
 # ======================================================
 # STARTUP
