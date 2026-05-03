@@ -37,8 +37,42 @@ export default function Inventory() {
       const r = await apiFetch(`/api/inventory/purchase`, {
         method: 'POST', body: JSON.stringify(payload),
       });
-      if (r.ok) { setModalVisible(false); setFormData({ bags: '', amount: '', bag_type: 'Naturoplast', date: new Date().toISOString().slice(0, 10), mode: 'Bank' }); fetchInventory(); Alert.alert('Success', 'Purchase added'); }
+      if (r.ok) {
+        setModalVisible(false);
+        setFormData({ bags: '', amount: '', bag_type: 'Naturoplast', date: new Date().toISOString().slice(0, 10), mode: 'Bank' });
+        fetchInventory();
+        Alert.alert('Success', 'Purchase added');
+      }
     } catch (e) { Alert.alert('Error', 'Failed'); }
+  };
+
+  const handleDeletePurchase = (purchase: any) => {
+    Alert.alert(
+      'Delete Purchase',
+      `Delete "${purchase.bag_type} - ${purchase.bags} bags" entry?\n\nThis will also deduct ${purchase.bags} bags from stock.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              const r = await apiFetch(`/api/inventory/purchase/${purchase.id}`, {
+                method: 'DELETE',
+              });
+              if (r.ok) {
+                fetchInventory();
+                Alert.alert('Deleted', 'Purchase entry removed and stock updated.');
+              } else {
+                Alert.alert('Error', 'Failed to delete.');
+              }
+            } catch (e) {
+              Alert.alert('Error', 'Something went wrong.');
+            }
+          },
+        },
+      ]
+    );
   };
 
   if (loading) return <View style={s.center}><ActivityIndicator size="large" color={T.primary} /></View>;
@@ -104,12 +138,23 @@ export default function Inventory() {
           <View style={s.card}>
             <Text style={{ fontSize: 14, fontWeight: 'bold', color: T.text, marginBottom: 12 }}>Purchase History</Text>
             {(inventory?.purchase_history || []).map((p: any, i: number) => (
-              <View key={i} style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#F0F0F0' }}>
-                <View>
+              <View key={p.id || i} style={{
+                flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+                paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#F0F0F0'
+              }}>
+                <View style={{ flex: 1 }}>
                   <Text style={{ fontSize: 13, fontWeight: '600', color: T.text }}>{p.bag_type} - {p.bags} bags</Text>
                   <Text style={{ fontSize: 11, color: T.muted }}>{typeof p.date === 'string' ? p.date.slice(0, 10) : ''} | {p.mode}</Text>
                 </View>
-                <Text style={{ fontSize: 14, fontWeight: 'bold', color: T.err }}>{'\u20b9'}{(p.amount || 0).toLocaleString('en-IN')}</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                  <Text style={{ fontSize: 14, fontWeight: 'bold', color: T.err }}>{'\u20b9'}{(p.amount || 0).toLocaleString('en-IN')}</Text>
+                  <TouchableOpacity
+                    onPress={() => handleDeletePurchase(p)}
+                    style={{ padding: 6, backgroundColor: '#FFEBEE', borderRadius: 6 }}
+                  >
+                    <Ionicons name="trash-outline" size={16} color={T.err} />
+                  </TouchableOpacity>
+                </View>
               </View>
             ))}
           </View>
