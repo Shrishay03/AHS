@@ -6,11 +6,12 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from 'expo-router';
 import { useApi } from '../../src/useApi';
+import { useTheme } from '../../src/ThemeContext';
 
-const T = { primary: '#2E7D32', secondary: '#1976D2', bg: '#F5F5F5', card: '#FFF', text: '#212121', muted: '#757575', ok: '#4CAF50', warn: '#FF9800', err: '#F44336', transfer: '#9C27B0' };
 const CATEGORIES = ['Bags', 'Labor', 'Transport', 'Materials', 'Rent', 'Electricity', 'Food', 'Misc'];
 
 export default function Transactions() {
+  const { theme: T } = useTheme();
   const { apiFetch } = useApi();
   const [transactions, setTransactions] = useState<any[]>([]);
   const [projects, setProjects] = useState<any[]>([]);
