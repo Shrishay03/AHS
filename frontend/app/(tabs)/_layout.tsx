@@ -13,19 +13,19 @@ const TAB_ITEMS = [
   { name: 'partners', title: 'Partners', icon: 'people' as const },
 ];
 
-// Wrap everything in ThemeProvider so all screens get theme access
-export default function RootLayout() {
+// Default export wraps everything in ThemeProvider
+export default function TabLayout() {
   return (
     <ThemeProvider>
-      <TabLayout />
+      <ThemedTabs />
     </ThemeProvider>
   );
 }
 
-function TabLayout() {
+// Inner component can safely call useTheme()
+function ThemedTabs() {
   const isDesktop = useIsDesktop();
-  const { theme, isDark, toggleTheme } = useTheme();
-  const T = theme;
+  const { theme: T, isDark, toggleTheme } = useTheme();
 
   return (
     <Tabs
@@ -47,22 +47,17 @@ function TabLayout() {
         headerTintColor: '#FFFFFF',
         headerTitleStyle: { fontWeight: 'bold' },
         headerShown: !isDesktop,
-        sceneStyle: isDesktop
-          ? { marginLeft: 240, backgroundColor: T.bg }
-          : { backgroundColor: T.bg },
-        // Dark mode toggle button in every screen header (mobile)
+        sceneStyle: { backgroundColor: T.bg },
+        // Toggle switch in every screen's header (mobile)
         headerRight: () => (
-          <View style={{ flexDirection: 'row', alignItems: 'center', marginRight: 12, gap: 6 }}>
-            <Ionicons
-              name={isDark ? 'moon' : 'sunny'}
-              size={16}
-              color="#FFF"
-            />
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginRight: 14, gap: 6 }}>
+            <Ionicons name={isDark ? 'moon' : 'sunny'} size={15} color="#FFF" />
             <Switch
               value={isDark}
               onValueChange={toggleTheme}
-              trackColor={{ false: 'rgba(255,255,255,0.3)', true: 'rgba(255,255,255,0.5)' }}
+              trackColor={{ false: 'rgba(255,255,255,0.35)', true: 'rgba(255,255,255,0.55)' }}
               thumbColor="#FFFFFF"
+              ios_backgroundColor="rgba(255,255,255,0.35)"
               style={{ transform: [{ scaleX: 0.8 }, { scaleY: 0.8 }] }}
             />
           </View>
@@ -88,12 +83,11 @@ function TabLayout() {
 }
 
 function DesktopSidebar({ state, descriptors, navigation }: any) {
-  const { theme, isDark, toggleTheme } = useTheme();
-  const T = theme;
+  const { theme: T, isDark, toggleTheme } = useTheme();
 
   return (
     <View style={[ds.sidebar, { backgroundColor: T.card, borderRightColor: T.border }]}>
-      {/* Logo Section */}
+      {/* Logo */}
       <View style={[ds.logoSection, { backgroundColor: T.headerBg }]}>
         <View style={ds.logoCircle}>
           <Ionicons name="business" size={28} color="#FFF" />
@@ -108,7 +102,6 @@ function DesktopSidebar({ state, descriptors, navigation }: any) {
           const isFocused = state.index === index;
           const tabItem = TAB_ITEMS[index];
           if (!tabItem) return null;
-
           return (
             <TouchableOpacity
               key={route.key}
@@ -119,16 +112,8 @@ function DesktopSidebar({ state, descriptors, navigation }: any) {
               ]}
               onPress={() => { if (!isFocused) navigation.navigate(route.name); }}
             >
-              <Ionicons
-                name={tabItem.icon}
-                size={22}
-                color={isFocused ? T.primary : T.muted}
-              />
-              <Text style={[
-                ds.navLabel,
-                { color: T.muted },
-                isFocused && { color: T.primary, fontWeight: '700' }
-              ]}>
+              <Ionicons name={tabItem.icon} size={22} color={isFocused ? T.primary : T.muted} />
+              <Text style={[ds.navLabel, { color: T.muted }, isFocused && { color: T.primary, fontWeight: '700' }]}>
                 {tabItem.title}
               </Text>
             </TouchableOpacity>
@@ -136,12 +121,14 @@ function DesktopSidebar({ state, descriptors, navigation }: any) {
         })}
       </View>
 
-      {/* Dark Mode Toggle in Sidebar Footer */}
+      {/* Dark Mode Toggle in Footer */}
       <View style={[ds.sidebarFooter, { borderTopColor: T.border }]}>
-        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', width: '100%', paddingHorizontal: 4 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
             <Ionicons name={isDark ? 'moon' : 'sunny'} size={16} color={T.muted} />
-            <Text style={{ fontSize: 12, color: T.muted }}>{isDark ? 'Dark Mode' : 'Light Mode'}</Text>
+            <Text style={{ fontSize: 13, color: T.muted, fontWeight: '500' }}>
+              {isDark ? 'Dark Mode' : 'Light Mode'}
+            </Text>
           </View>
           <Switch
             value={isDark}
@@ -151,7 +138,7 @@ function DesktopSidebar({ state, descriptors, navigation }: any) {
             style={{ transform: [{ scaleX: 0.85 }, { scaleY: 0.85 }] }}
           />
         </View>
-        <Text style={[ds.footerText, { color: T.muted, marginTop: 8 }]}>v1.0 - Web Dashboard</Text>
+        <Text style={{ fontSize: 11, color: T.muted, marginTop: 10 }}>v1.0 - Web Dashboard</Text>
       </View>
     </View>
   );
@@ -161,11 +148,9 @@ const ds = StyleSheet.create({
   sidebar: {
     position: Platform.OS === 'web' ? ('fixed' as any) : 'absolute',
     left: 0, top: 0, bottom: 0, width: 240,
-    borderRightWidth: 1, paddingTop: 0, zIndex: 100,
+    borderRightWidth: 1, zIndex: 100,
   },
-  logoSection: {
-    padding: 24, paddingTop: 32, alignItems: 'center',
-  },
+  logoSection: { padding: 24, paddingTop: 32, alignItems: 'center' },
   logoCircle: {
     width: 56, height: 56, borderRadius: 28,
     backgroundColor: 'rgba(255,255,255,0.2)',
@@ -180,8 +165,5 @@ const ds = StyleSheet.create({
     borderRadius: 10, marginBottom: 4,
   },
   navLabel: { fontSize: 15, fontWeight: '500' },
-  sidebarFooter: {
-    padding: 16, borderTopWidth: 1, alignItems: 'center',
-  },
-  footerText: { fontSize: 11 },
+  sidebarFooter: { padding: 16, borderTopWidth: 1, alignItems: 'center' },
 });
