@@ -21,10 +21,8 @@ export default function Transactions() {
   const [projectPickerVisible, setProjectPickerVisible] = useState(false);
   const [editingTxn, setEditingTxn] = useState<any>(null);
   const [formData, setFormData] = useState({
-    date: new Date().toISOString().slice(0, 10),
-    amount: '', type: 'Expense', mode: 'Bank',
-    linked_project_id: '', linked_project_name: '',
-    category: 'Bags', description: '',
+    date: new Date().toISOString().slice(0, 10), amount: '', type: 'Expense', mode: 'Bank',
+    linked_project_id: '', linked_project_name: '', category: 'Bags', description: '',
   });
 
   const fetchData = async () => {
@@ -43,29 +41,19 @@ export default function Transactions() {
 
   const fmt = (n: number) => `₹${(n || 0).toLocaleString('en-IN')}`;
 
-  const formatDate = (dateStr: string) => {
-    if (!dateStr) return '';
-    const d = dateStr.slice(0, 10).split('-');
-    return `${d[2]}-${d[1]}-${d[0]}`;
-  };
+const formatDate = (dateStr: string) => {
+  if (!dateStr) return '';
+  const d = dateStr.slice(0, 10).split('-');
+  return `${d[2]}-${d[1]}-${d[0]}`;
+};
 
   const openAdd = () => {
     setEditingTxn(null);
-    setFormData({
-      date: new Date().toISOString().slice(0, 10),
-      amount: '', type: 'Expense', mode: 'Bank',
-      linked_project_id: '', linked_project_name: '',
-      category: 'Bags', description: '',
-    });
+    setFormData({ date: new Date().toISOString().slice(0, 10), amount: '', type: 'Expense', mode: 'Bank', linked_project_id: '', linked_project_name: '', category: 'Bags', description: '' });
     setModalVisible(true);
   };
 
   const openEdit = (t: any) => {
-    // Don't allow editing Transfer entries
-    if (t.category === 'Transfer') {
-      Alert.alert('Info', 'Transfer entries cannot be edited. Delete and re-create if needed.');
-      return;
-    }
     setEditingTxn(t);
     const dateStr = typeof t.date === 'string' ? t.date.slice(0, 10) : new Date(t.date).toISOString().slice(0, 10);
     setFormData({
@@ -78,31 +66,14 @@ export default function Transactions() {
 
   const handleSave = async () => {
     if (!formData.amount) { Alert.alert('Error', 'Enter amount'); return; }
-
     try {
-      // For Transfer: only send type=Transfer and amount+date+description
-      // Backend handles creating both Bank Expense and Petty Cash Income entries
-      const isTransfer = formData.type === 'Transfer';
-      const payload = isTransfer
-        ? {
-            date: formData.date,
-            amount: parseFloat(formData.amount),
-            type: 'Transfer',
-            mode: 'Transfer',
-            category: 'Transfer',
-            description: formData.description || 'Cash withdrawal to Petty Cash',
-          }
-        : {
-            date: formData.date,
-            amount: parseFloat(formData.amount),
-            type: formData.type,
-            mode: formData.mode,
-            linked_project_id: formData.linked_project_id || null,
-            linked_project_name: formData.linked_project_name || null,
-            category: formData.type === 'Expense' ? formData.category : null,
-            description: formData.description,
-          };
-
+      const payload = {
+        date: formData.date, amount: parseFloat(formData.amount), type: formData.type,
+        mode: formData.mode, linked_project_id: formData.linked_project_id || null,
+        linked_project_name: formData.linked_project_name || null,
+        category: formData.type === 'Expense' ? formData.category : null,
+        description: formData.description,
+      };
       const url = editingTxn ? `/api/transactions/${editingTxn.id}` : `/api/transactions`;
       const r = await apiFetch(url, { method: editingTxn ? 'PUT' : 'POST', body: JSON.stringify(payload) });
       if (r.ok) { setModalVisible(false); fetchData(); }
@@ -110,17 +81,12 @@ export default function Transactions() {
   };
 
   const handleDelete = (t: any) => {
-    const msg = t.category === 'Transfer'
-      ? 'This will delete both the Bank debit and Petty Cash credit entries. Continue?'
-      : 'Are you sure?';
-    Alert.alert('Delete Transaction', msg, [
+    Alert.alert('Delete Transaction', 'Are you sure?', [
       { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Delete', style: 'destructive', onPress: async () => {
-          await apiFetch(`/api/transactions/${t.id}`, { method: 'DELETE' });
-          fetchData();
-        }
-      },
+      { text: 'Delete', style: 'destructive', onPress: async () => {
+        await apiFetch(`/api/transactions/${t.id}`, { method: 'DELETE' });
+        fetchData();
+      }},
     ]);
   };
 
@@ -131,88 +97,63 @@ export default function Transactions() {
     } catch (e) { Alert.alert('Error', 'Export failed'); }
   };
 
-  // Get icon and color for transaction type
-  const getTxnStyle = (t: any) => {
-    if (t.category === 'Transfer') {
-      return { color: T.transfer, icon: 'swap-horizontal' as const, prefix: '↔' };
-    }
-    if (t.type === 'Income') {
-      return { color: T.ok, icon: 'arrow-down' as const, prefix: '+' };
-    }
-    return { color: T.err, icon: 'arrow-up' as const, prefix: '-' };
-  };
-
   if (loading) return <View style={s.center}><ActivityIndicator size="large" color={T.primary} /></View>;
 
   return (
     <View style={s.container}>
       <View style={{ backgroundColor: T.card, padding: 10, borderBottomWidth: 1, borderBottomColor: '#E0E0E0' }}>
-        <TouchableOpacity
-          testID="export-csv-btn"
-          style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 8, borderRadius: 8, backgroundColor: '#E8F5E9', gap: 6 }}
+        <TouchableOpacity testID="export-csv-btn" style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 8, borderRadius: 8, backgroundColor: '#E8F5E9', gap: 6 }}
           onPress={handleExport}>
           <Ionicons name="download-outline" size={18} color={T.primary} />
           <Text style={{ fontSize: 13, fontWeight: '600', color: T.primary }}>Export CSV</Text>
         </TouchableOpacity>
       </View>
 
-      <ScrollView
-        style={{ flex: 1 }}
-        contentContainerStyle={{ padding: 16, paddingBottom: 80 }}
+      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 16, paddingBottom: 80 }}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); fetchData(); }} colors={[T.primary]} />}>
-
         {transactions.length === 0 ? (
           <View style={{ alignItems: 'center', paddingVertical: 80 }}>
             <Ionicons name="receipt-outline" size={64} color={T.muted} />
             <Text style={{ fontSize: 18, fontWeight: '600', color: T.text, marginTop: 16 }}>No transactions yet</Text>
           </View>
         ) : (
-          transactions.map((t) => {
-            const txnStyle = getTxnStyle(t);
-            return (
-              <View key={t.id} style={s.card}>
-                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 6 }}>
-                  <View style={{ flexDirection: 'row', gap: 10, flex: 1 }}>
-                    <View style={[s.typeIcon, { backgroundColor: txnStyle.color }]}>
-                      <Ionicons name={txnStyle.icon} size={18} color="#FFF" />
-                    </View>
-                    <View style={{ flex: 1 }}>
-                      <Text style={{ fontSize: 13, fontWeight: '600', color: T.text }}>
-                        {typeof t.date === 'string' ? formatDate(t.date) : ''}
-                      </Text>
-                      <Text style={{ fontSize: 11, color: T.muted }}>
-                        {t.category === 'Transfer'
-                          ? 'Bank → Petty Cash'
-                          : `${t.mode}${t.category ? ` | ${t.category}` : ''}`}
-                      </Text>
-                      {t.linked_project_name && (
-                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 }}>
-                          <Ionicons name="folder-outline" size={12} color={T.secondary} />
-                          <Text style={{ fontSize: 11, color: T.secondary }}>{t.linked_project_name}</Text>
-                        </View>
-                      )}
-                    </View>
+          transactions.map((t) => (
+            <View key={t.id} style={s.card}>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 6 }}>
+                <View style={{ flexDirection: 'row', gap: 10, flex: 1 }}>
+                  <View style={[s.typeIcon, { backgroundColor: t.type === 'Income' ? T.ok : T.err }]}>
+                    <Ionicons name={t.type === 'Income' ? 'arrow-down' : 'arrow-up'} size={18} color="#FFF" />
                   </View>
-                  <Text style={{ fontSize: 16, fontWeight: 'bold', color: txnStyle.color }}>
-                    {t.category === 'Transfer' ? '' : txnStyle.prefix}{fmt(t.amount)}
-                  </Text>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontSize: 13, fontWeight: '600', color: T.text }}>
+                      {typeof t.date === 'string' ? formatDate(t.date) : ''}
+                    </Text>
+                    <Text style={{ fontSize: 11, color: T.muted }}>{t.mode}{t.category ? ` | ${t.category}` : ''}</Text>
+                    {t.linked_project_name && (
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 }}>
+                        <Ionicons name="folder-outline" size={12} color={T.secondary} />
+                        <Text style={{ fontSize: 11, color: T.secondary }}>{t.linked_project_name}</Text>
+                      </View>
+                    )}
+                  </View>
                 </View>
-                {t.description ? (
-                  <Text style={{ fontSize: 12, color: T.muted, fontStyle: 'italic', marginTop: 4 }}>{t.description}</Text>
-                ) : null}
-                <View style={{ flexDirection: 'row', gap: 8, marginTop: 10 }}>
-                  <TouchableOpacity style={[s.actBtn, { backgroundColor: '#E3F2FD' }]} onPress={() => openEdit(t)}>
-                    <Ionicons name="create-outline" size={16} color={T.secondary} />
-                    <Text style={{ fontSize: 12, fontWeight: '600', color: T.secondary }}>Edit</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity style={[s.actBtn, { backgroundColor: '#FFEBEE' }]} onPress={() => handleDelete(t)}>
-                    <Ionicons name="trash-outline" size={16} color={T.err} />
-                    <Text style={{ fontSize: 12, fontWeight: '600', color: T.err }}>Delete</Text>
-                  </TouchableOpacity>
-                </View>
+                <Text style={{ fontSize: 16, fontWeight: 'bold', color: t.type === 'Income' ? T.ok : T.err }}>
+                  {t.type === 'Income' ? '+' : '-'}{fmt(t.amount)}
+                </Text>
               </View>
-            );
-          })
+              {t.description ? <Text style={{ fontSize: 12, color: T.muted, fontStyle: 'italic', marginTop: 4 }}>{t.description}</Text> : null}
+              <View style={{ flexDirection: 'row', gap: 8, marginTop: 10 }}>
+                <TouchableOpacity style={[s.actBtn, { backgroundColor: '#E3F2FD' }]} onPress={() => openEdit(t)}>
+                  <Ionicons name="create-outline" size={16} color={T.secondary} />
+                  <Text style={{ fontSize: 12, fontWeight: '600', color: T.secondary }}>Edit</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={[s.actBtn, { backgroundColor: '#FFEBEE' }]} onPress={() => handleDelete(t)}>
+                  <Ionicons name="trash-outline" size={16} color={T.err} />
+                  <Text style={{ fontSize: 12, fontWeight: '600', color: T.err }}>Delete</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          ))
         )}
       </ScrollView>
 
@@ -225,107 +166,54 @@ export default function Transactions() {
         <View style={s.modalBg}>
           <View style={s.modalBox}>
             <View style={s.modalHeader}>
-              <Text style={{ fontSize: 18, fontWeight: 'bold', color: T.text }}>
-                {editingTxn ? 'Edit Transaction' : 'Add Transaction'}
-              </Text>
-              <TouchableOpacity onPress={() => setModalVisible(false)}>
-                <Ionicons name="close" size={26} color={T.text} />
-              </TouchableOpacity>
+              <Text style={{ fontSize: 18, fontWeight: 'bold', color: T.text }}>{editingTxn ? 'Edit Transaction' : 'Add Transaction'}</Text>
+              <TouchableOpacity onPress={() => setModalVisible(false)}><Ionicons name="close" size={26} color={T.text} /></TouchableOpacity>
             </View>
             <ScrollView style={{ padding: 16 }}>
-
-              {/* Type selector: Income / Expense / Transfer */}
               <Label text="Type" />
-              <View style={{ flexDirection: 'row', gap: 8 }}>
-                {['Income', 'Expense', 'Transfer'].map(tp => {
-                  const activeColor = tp === 'Income' ? T.ok : tp === 'Expense' ? T.err : T.transfer;
-                  const isActive = formData.type === tp;
-                  return (
-                    <TouchableOpacity
-                      key={tp}
-                      style={[s.chipBtn, isActive && { backgroundColor: activeColor, borderColor: activeColor }]}
-                      onPress={() => setFormData({ ...formData, type: tp })}>
-                      <Text style={[{ fontSize: 13, fontWeight: '600', color: T.muted }, isActive && { color: '#FFF' }]}>
-                        {tp}
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })}
+              <View style={{ flexDirection: 'row', gap: 12 }}>
+                {['Income', 'Expense', 'Transfer'].map(tp => (
+                  <TouchableOpacity key={tp} style={[s.chipBtn, formData.type === tp && { backgroundColor: tp === 'Income' ? T.ok : tp === 'Expense' ? T.err : '#9C27B0', borderColor: tp === 'Income' ? T.ok : tp === 'Expense' ? T.err : '#9C27B0' }]}
+                    onPress={() => setFormData({ ...formData, type: tp })}>
+                    <Text style={[{ fontSize: 13, fontWeight: '600', color: T.muted }, formData.type === tp && { color: '#FFF' }]}>{tp}</Text>
+                  </TouchableOpacity>
+                ))}
               </View>
 
-              {/* Transfer explanation banner */}
-              {formData.type === 'Transfer' && (
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 12, padding: 12, backgroundColor: '#F3E5F5', borderRadius: 8, borderLeftWidth: 4, borderLeftColor: T.transfer }}>
-                  <Ionicons name="swap-horizontal" size={18} color={T.transfer} />
-                  <Text style={{ fontSize: 12, color: T.transfer, flex: 1 }}>
-                    Transfers cash from Bank to Petty Cash.{'\n'}Bank balance ↓ • Petty Cash balance ↑
-                  </Text>
-                </View>
-              )}
-
               <Label text="Amount *" />
-              <TextInput
-                style={s.input}
-                value={formData.amount}
-                onChangeText={v => setFormData({ ...formData, amount: v })}
-                keyboardType="numeric"
-                placeholder="0"
-              />
+              <TextInput style={s.input} value={formData.amount} onChangeText={v => setFormData({ ...formData, amount: v })} keyboardType="numeric" placeholder="0" />
 
               <Label text="Date" />
-              <TextInput
-                style={s.input}
-                value={formData.date}
-                onChangeText={v => setFormData({ ...formData, date: v })}
-                placeholder="YYYY-MM-DD"
-              />
+              <TextInput style={s.input} value={formData.date} onChangeText={v => setFormData({ ...formData, date: v })} placeholder="DD-MM-YYYY" />
 
-              {/* Mode selector — hidden for Transfer */}
-              {formData.type !== 'Transfer' && (
-                <>
-                  <Label text="Mode" />
-                  <View style={{ flexDirection: 'row', gap: 8 }}>
-                    {['Bank', 'Petty Cash', 'Partner'].map(m => (
-                      <TouchableOpacity
-                        key={m}
-                        style={[s.chipBtn, formData.mode === m && { backgroundColor: T.secondary, borderColor: T.secondary }]}
-                        onPress={() => setFormData({ ...formData, mode: m })}>
-                        <Text style={[{ fontSize: 12, fontWeight: '600', color: T.muted }, formData.mode === m && { color: '#FFF' }]}>{m}</Text>
-                      </TouchableOpacity>
-                    ))}
-                  </View>
-                </>
-              )}
-
-              {/* Project linking — hidden for Transfer */}
-              {formData.type !== 'Transfer' && (
-                <>
-                  <Label text="Link to Project (optional)" />
-                  <TouchableOpacity
-                    testID="select-project-btn"
-                    style={[s.input, { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }]}
-                    onPress={() => setProjectPickerVisible(true)}>
-                    <Text style={{ color: formData.linked_project_name ? T.text : T.muted, fontSize: 14 }}>
-                      {formData.linked_project_name || 'Select project...'}
-                    </Text>
-                    <Ionicons name="chevron-down" size={18} color={T.muted} />
+              <Label text="Mode" />
+              <View style={{ flexDirection: 'row', gap: 8 }}>
+                {['Bank', 'Petty Cash', 'Partner'].map(m => (
+                  <TouchableOpacity key={m} style={[s.chipBtn, formData.mode === m && { backgroundColor: T.secondary, borderColor: T.secondary }]}
+                    onPress={() => setFormData({ ...formData, mode: m })}>
+                    <Text style={[{ fontSize: 12, fontWeight: '600', color: T.muted }, formData.mode === m && { color: '#FFF' }]}>{m}</Text>
                   </TouchableOpacity>
-                </>
-              )}
+                ))}
+              </View>
 
-              {/* Category — only for Expense */}
+              {/* Project Linking */}
+              <Label text="Link to Project (optional)" />
+              <TouchableOpacity testID="select-project-btn" style={[s.input, { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }]}
+                onPress={() => setProjectPickerVisible(true)}>
+                <Text style={{ color: formData.linked_project_name ? T.text : T.muted, fontSize: 14 }}>
+                  {formData.linked_project_name || 'Select project...'}
+                </Text>
+                <Ionicons name="chevron-down" size={18} color={T.muted} />
+              </TouchableOpacity>
+
               {formData.type === 'Expense' && (
                 <>
                   <Label text="Category" />
                   <ScrollView horizontal showsHorizontalScrollIndicator={false}>
                     <View style={{ flexDirection: 'row', gap: 6 }}>
                       {CATEGORIES.map(c => (
-                        <TouchableOpacity
-                          key={c}
-                          style={[
-                            { paddingVertical: 7, paddingHorizontal: 14, borderRadius: 20, borderWidth: 1, borderColor: '#E0E0E0', backgroundColor: T.bg },
-                            formData.category === c && { backgroundColor: T.primary, borderColor: T.primary }
-                          ]}
+                        <TouchableOpacity key={c} style={[{ paddingVertical: 7, paddingHorizontal: 14, borderRadius: 20, borderWidth: 1, borderColor: '#E0E0E0', backgroundColor: T.bg },
+                          formData.category === c && { backgroundColor: T.primary, borderColor: T.primary }]}
                           onPress={() => setFormData({ ...formData, category: c })}>
                           <Text style={[{ fontSize: 12, fontWeight: '600', color: T.muted }, formData.category === c && { color: '#FFF' }]}>{c}</Text>
                         </TouchableOpacity>
@@ -336,25 +224,15 @@ export default function Transactions() {
               )}
 
               <Label text="Description" />
-              <TextInput
-                style={[s.input, { height: 70, textAlignVertical: 'top' }]}
-                value={formData.description}
-                onChangeText={v => setFormData({ ...formData, description: v })}
-                placeholder={formData.type === 'Transfer' ? 'e.g. Cash withdrawal for site expenses' : 'Optional notes...'}
-                multiline
-              />
+              <TextInput style={[s.input, { height: 70, textAlignVertical: 'top' }]} value={formData.description}
+                onChangeText={v => setFormData({ ...formData, description: v })} placeholder="Optional notes..." multiline />
             </ScrollView>
             <View style={s.modalActions}>
               <TouchableOpacity style={[s.modalBtn, { backgroundColor: T.bg }]} onPress={() => setModalVisible(false)}>
                 <Text style={{ fontWeight: '600', color: T.text }}>Cancel</Text>
               </TouchableOpacity>
-              <TouchableOpacity
-                testID="save-transaction-btn"
-                style={[s.modalBtn, { backgroundColor: formData.type === 'Transfer' ? T.transfer : T.primary }]}
-                onPress={handleSave}>
-                <Text style={{ fontWeight: '600', color: '#FFF' }}>
-                  {formData.type === 'Transfer' ? 'Transfer' : 'Save'}
-                </Text>
+              <TouchableOpacity testID="save-transaction-btn" style={[s.modalBtn, { backgroundColor: T.primary }]} onPress={handleSave}>
+                <Text style={{ fontWeight: '600', color: '#FFF' }}>Save</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -367,20 +245,15 @@ export default function Transactions() {
           <View style={[s.modalBox, { maxHeight: '50%' }]}>
             <View style={s.modalHeader}>
               <Text style={{ fontSize: 16, fontWeight: 'bold', color: T.text }}>Select Project</Text>
-              <TouchableOpacity onPress={() => setProjectPickerVisible(false)}>
-                <Ionicons name="close" size={24} color={T.text} />
-              </TouchableOpacity>
+              <TouchableOpacity onPress={() => setProjectPickerVisible(false)}><Ionicons name="close" size={24} color={T.text} /></TouchableOpacity>
             </View>
             <ScrollView>
-              <TouchableOpacity
-                style={{ padding: 16, borderBottomWidth: 1, borderBottomColor: '#F0F0F0' }}
+              <TouchableOpacity style={{ padding: 16, borderBottomWidth: 1, borderBottomColor: '#F0F0F0' }}
                 onPress={() => { setFormData({ ...formData, linked_project_id: '', linked_project_name: '' }); setProjectPickerVisible(false); }}>
                 <Text style={{ color: T.muted }}>None</Text>
               </TouchableOpacity>
               {(projects || []).map(p => (
-                <TouchableOpacity
-                  key={p.id}
-                  style={{ padding: 16, borderBottomWidth: 1, borderBottomColor: '#F0F0F0' }}
+                <TouchableOpacity key={p.id} style={{ padding: 16, borderBottomWidth: 1, borderBottomColor: '#F0F0F0' }}
                   onPress={() => { setFormData({ ...formData, linked_project_id: p.id, linked_project_name: p.name }); setProjectPickerVisible(false); }}>
                   <Text style={{ fontWeight: '600', color: T.text }}>{p.name}</Text>
                   <Text style={{ fontSize: 12, color: T.muted }}>{p.status}</Text>
