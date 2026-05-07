@@ -8,10 +8,11 @@ import { useFocusEffect } from 'expo-router';
 import { useAuth } from '../../src/AuthContext';
 import { useApi } from '../../src/useApi';
 import { useIsDesktop } from '../../src/useResponsive';
+import { useTheme } from '../../src/ThemeContext';
 
-const T = { primary: '#2E7D32', secondary: '#1976D2', bg: '#F5F5F5', card: '#FFF', text: '#212121', muted: '#757575', ok: '#4CAF50', warn: '#FF9800', err: '#F44336' };
 
 export default function Dashboard() {
+  const { theme: T } = useTheme();
   const { logout } = useAuth();
   const { apiFetch } = useApi();
   const isDesktop = useIsDesktop();
