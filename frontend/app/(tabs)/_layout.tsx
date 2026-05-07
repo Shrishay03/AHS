@@ -1,10 +1,9 @@
 import React from 'react';
 import { Tabs } from 'expo-router';
-import { View, Text, TouchableOpacity, StyleSheet, Platform } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, Platform, Switch } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useIsDesktop } from '../../src/useResponsive';
-
-const T = { primary: '#2E7D32', secondary: '#1976D2', bg: '#F5F5F5', card: '#FFF', text: '#212121', muted: '#757575' };
+import { ThemeProvider, useTheme } from '../../src/ThemeContext';
 
 const TAB_ITEMS = [
   { name: 'index', title: 'Dashboard', icon: 'home' as const },
@@ -14,8 +13,19 @@ const TAB_ITEMS = [
   { name: 'partners', title: 'Partners', icon: 'people' as const },
 ];
 
-export default function TabLayout() {
+// Wrap everything in ThemeProvider so all screens get theme access
+export default function RootLayout() {
+  return (
+    <ThemeProvider>
+      <TabLayout />
+    </ThemeProvider>
+  );
+}
+
+function TabLayout() {
   const isDesktop = useIsDesktop();
+  const { theme, isDark, toggleTheme } = useTheme();
+  const T = theme;
 
   return (
     <Tabs
@@ -25,19 +35,38 @@ export default function TabLayout() {
         tabBarStyle: isDesktop
           ? { display: 'none' }
           : {
-              backgroundColor: T.card,
+              backgroundColor: T.tabBg,
               borderTopWidth: 1,
-              borderTopColor: '#E0E0E0',
+              borderTopColor: T.border,
               height: 60,
               paddingBottom: 8,
               paddingTop: 8,
             },
         tabBarLabelStyle: { fontSize: 11, fontWeight: '600' },
-        headerStyle: { backgroundColor: T.primary },
+        headerStyle: { backgroundColor: T.headerBg },
         headerTintColor: '#FFFFFF',
         headerTitleStyle: { fontWeight: 'bold' },
         headerShown: !isDesktop,
-        sceneStyle: isDesktop ? { marginLeft: 240 } : undefined,
+        sceneStyle: isDesktop
+          ? { marginLeft: 240, backgroundColor: T.bg }
+          : { backgroundColor: T.bg },
+        // Dark mode toggle button in every screen header (mobile)
+        headerRight: () => (
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginRight: 12, gap: 6 }}>
+            <Ionicons
+              name={isDark ? 'moon' : 'sunny'}
+              size={16}
+              color="#FFF"
+            />
+            <Switch
+              value={isDark}
+              onValueChange={toggleTheme}
+              trackColor={{ false: 'rgba(255,255,255,0.3)', true: 'rgba(255,255,255,0.5)' }}
+              thumbColor="#FFFFFF"
+              style={{ transform: [{ scaleX: 0.8 }, { scaleY: 0.8 }] }}
+            />
+          </View>
+        ),
       }}
       tabBar={isDesktop ? (props) => <DesktopSidebar {...props} /> : undefined}
     >
@@ -59,10 +88,13 @@ export default function TabLayout() {
 }
 
 function DesktopSidebar({ state, descriptors, navigation }: any) {
+  const { theme, isDark, toggleTheme } = useTheme();
+  const T = theme;
+
   return (
-    <View style={ds.sidebar}>
+    <View style={[ds.sidebar, { backgroundColor: T.card, borderRightColor: T.border }]}>
       {/* Logo Section */}
-      <View style={ds.logoSection}>
+      <View style={[ds.logoSection, { backgroundColor: T.headerBg }]}>
         <View style={ds.logoCircle}>
           <Ionicons name="business" size={28} color="#FFF" />
         </View>
@@ -73,7 +105,6 @@ function DesktopSidebar({ state, descriptors, navigation }: any) {
       {/* Nav Items */}
       <View style={ds.navSection}>
         {state.routes.map((route: any, index: number) => {
-          const { options } = descriptors[route.key];
           const isFocused = state.index === index;
           const tabItem = TAB_ITEMS[index];
           if (!tabItem) return null;
@@ -82,19 +113,22 @@ function DesktopSidebar({ state, descriptors, navigation }: any) {
             <TouchableOpacity
               key={route.key}
               testID={`sidebar-${tabItem.name}`}
-              style={[ds.navItem, isFocused && ds.navItemActive]}
-              onPress={() => {
-                if (!isFocused) {
-                  navigation.navigate(route.name);
-                }
-              }}
+              style={[
+                ds.navItem,
+                isFocused && { backgroundColor: isDark ? '#1B5E20' : '#E8F5E9' }
+              ]}
+              onPress={() => { if (!isFocused) navigation.navigate(route.name); }}
             >
               <Ionicons
                 name={tabItem.icon}
                 size={22}
                 color={isFocused ? T.primary : T.muted}
               />
-              <Text style={[ds.navLabel, isFocused && ds.navLabelActive]}>
+              <Text style={[
+                ds.navLabel,
+                { color: T.muted },
+                isFocused && { color: T.primary, fontWeight: '700' }
+              ]}>
                 {tabItem.title}
               </Text>
             </TouchableOpacity>
@@ -102,9 +136,22 @@ function DesktopSidebar({ state, descriptors, navigation }: any) {
         })}
       </View>
 
-      {/* Footer */}
-      <View style={ds.sidebarFooter}>
-        <Text style={ds.footerText}>v1.0 - Web Dashboard</Text>
+      {/* Dark Mode Toggle in Sidebar Footer */}
+      <View style={[ds.sidebarFooter, { borderTopColor: T.border }]}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', width: '100%', paddingHorizontal: 4 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <Ionicons name={isDark ? 'moon' : 'sunny'} size={16} color={T.muted} />
+            <Text style={{ fontSize: 12, color: T.muted }}>{isDark ? 'Dark Mode' : 'Light Mode'}</Text>
+          </View>
+          <Switch
+            value={isDark}
+            onValueChange={toggleTheme}
+            trackColor={{ false: '#E0E0E0', true: T.primary }}
+            thumbColor="#FFFFFF"
+            style={{ transform: [{ scaleX: 0.85 }, { scaleY: 0.85 }] }}
+          />
+        </View>
+        <Text style={[ds.footerText, { color: T.muted, marginTop: 8 }]}>v1.0 - Web Dashboard</Text>
       </View>
     </View>
   );
@@ -113,76 +160,28 @@ function DesktopSidebar({ state, descriptors, navigation }: any) {
 const ds = StyleSheet.create({
   sidebar: {
     position: Platform.OS === 'web' ? ('fixed' as any) : 'absolute',
-    left: 0,
-    top: 0,
-    bottom: 0,
-    width: 240,
-    backgroundColor: T.card,
-    borderRightWidth: 1,
-    borderRightColor: '#E0E0E0',
-    paddingTop: 0,
-    zIndex: 100,
+    left: 0, top: 0, bottom: 0, width: 240,
+    borderRightWidth: 1, paddingTop: 0, zIndex: 100,
   },
   logoSection: {
-    backgroundColor: T.primary,
-    padding: 24,
-    paddingTop: 32,
-    alignItems: 'center',
+    padding: 24, paddingTop: 32, alignItems: 'center',
   },
   logoCircle: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
+    width: 56, height: 56, borderRadius: 28,
     backgroundColor: 'rgba(255,255,255,0.2)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 12,
+    justifyContent: 'center', alignItems: 'center', marginBottom: 12,
   },
-  logoTitle: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: '#FFF',
-  },
-  logoSubtitle: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#FFF',
-    opacity: 0.9,
-  },
-  navSection: {
-    flex: 1,
-    paddingTop: 16,
-    paddingHorizontal: 12,
-  },
+  logoTitle: { fontSize: 16, fontWeight: 'bold', color: '#FFF' },
+  logoSubtitle: { fontSize: 14, fontWeight: '600', color: '#FFF', opacity: 0.9 },
+  navSection: { flex: 1, paddingTop: 16, paddingHorizontal: 12 },
   navItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 14,
-    paddingVertical: 14,
-    paddingHorizontal: 16,
-    borderRadius: 10,
-    marginBottom: 4,
+    flexDirection: 'row', alignItems: 'center', gap: 14,
+    paddingVertical: 14, paddingHorizontal: 16,
+    borderRadius: 10, marginBottom: 4,
   },
-  navItemActive: {
-    backgroundColor: '#E8F5E9',
-  },
-  navLabel: {
-    fontSize: 15,
-    fontWeight: '500',
-    color: T.muted,
-  },
-  navLabelActive: {
-    color: T.primary,
-    fontWeight: '700',
-  },
+  navLabel: { fontSize: 15, fontWeight: '500' },
   sidebarFooter: {
-    padding: 16,
-    borderTopWidth: 1,
-    borderTopColor: '#E0E0E0',
-    alignItems: 'center',
+    padding: 16, borderTopWidth: 1, alignItems: 'center',
   },
-  footerText: {
-    fontSize: 11,
-    color: T.muted,
-  },
+  footerText: { fontSize: 11 },
 });
