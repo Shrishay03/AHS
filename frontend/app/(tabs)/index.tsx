@@ -7,8 +7,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from 'expo-router';
 import { useAuth } from '../../src/AuthContext';
 import { useApi } from '../../src/useApi';
-import { useIsDesktop } from '../../src/useResponsive';
 import { useTheme } from '../../src/ThemeContext';
+import { useIsDesktop } from '../../src/useResponsive';
 
 
 export default function Dashboard() {
