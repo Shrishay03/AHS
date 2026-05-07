@@ -1,8 +1,13 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+
+// Safe AsyncStorage import - won't crash if not installed
+let AsyncStorage: any = null;
+try {
+  AsyncStorage = require('@react-native-async-storage/async-storage').default;
+} catch (e) {}
 
 // ======================================================
-// THEME COLORS
+// THEME DEFINITIONS
 // ======================================================
 
 export const LightTheme = {
@@ -35,7 +40,7 @@ export const DarkTheme = {
   warn: '#FFA726',
   err: '#EF5350',
   transfer: '#CE93D8',
-  border: '#333333',
+  border: '#2C2C2C',
   inputBg: '#2C2C2C',
   headerBg: '#1B5E20',
   tabBg: '#1E1E1E',
@@ -55,7 +60,7 @@ interface ThemeContextType {
   toggleTheme: () => void;
 }
 
-const ThemeContext = createContext<ThemeContextType>({
+export const ThemeContext = createContext<ThemeContextType>({
   theme: LightTheme,
   isDark: false,
   toggleTheme: () => {},
@@ -64,23 +69,30 @@ const ThemeContext = createContext<ThemeContextType>({
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const [isDark, setIsDark] = useState(false);
 
-  // Load saved preference on mount
   useEffect(() => {
-    AsyncStorage.getItem('theme').then(val => {
-      if (val === 'dark') setIsDark(true);
-    }).catch(() => {});
+    if (AsyncStorage) {
+      AsyncStorage.getItem('ahs_theme').then((val: string | null) => {
+        if (val === 'dark') setIsDark(true);
+      }).catch(() => {});
+    }
   }, []);
 
   const toggleTheme = () => {
     setIsDark(prev => {
       const next = !prev;
-      AsyncStorage.setItem('theme', next ? 'dark' : 'light').catch(() => {});
+      if (AsyncStorage) {
+        AsyncStorage.setItem('ahs_theme', next ? 'dark' : 'light').catch(() => {});
+      }
       return next;
     });
   };
 
   return (
-    <ThemeContext.Provider value={{ theme: isDark ? DarkTheme : LightTheme, isDark, toggleTheme }}>
+    <ThemeContext.Provider value={{
+      theme: isDark ? DarkTheme : LightTheme,
+      isDark,
+      toggleTheme
+    }}>
       {children}
     </ThemeContext.Provider>
   );
