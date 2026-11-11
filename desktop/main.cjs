@@ -42,6 +42,7 @@ app.whenReady().then(() => {
     saveStorage();
     event.returnValue = true;
   });
+  ipcMain.on('ahs-storage:get-all', event => { event.returnValue = JSON.stringify(storedValues); });
   ipcMain.on('ahs-storage:key', (event, index) => {
     event.returnValue = Object.keys(storedValues)[index] ?? null;
   });
