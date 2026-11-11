@@ -7,7 +7,7 @@ The installer is built by the GitHub Actions workflow named **Build AHS Windows 
 1. Open the AHS GitHub repository and select **Actions**.
 2. Open the latest **Build AHS Windows app** run.
 3. Download the **AHS-Windows-Installer** artifact and extract it.
-4. Run `AHS-Setup-1.0.1.exe` and follow the setup prompts.
+4. Run `AHS-Setup-1.0.2.exe` and follow the setup prompts.
 
 ## Local data
 
