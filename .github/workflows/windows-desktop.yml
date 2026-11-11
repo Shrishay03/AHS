@@ -6,8 +6,6 @@ on:
     branches: [main]
     paths:
       - 'desktop/**'
-      - 'site/**'
-      - '.github/workflows/windows-desktop.yml'
 
 permissions:
   contents: read
