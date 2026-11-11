@@ -1,6 +1,6 @@
 {
   "name": "ahs-desktop",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Aruvi Housing Solutions local Windows desktop application",
   "main": "main.cjs",
   "author": "Aruvi Housing Solutions",
